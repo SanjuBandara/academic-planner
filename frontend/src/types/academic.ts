@@ -102,14 +102,24 @@ export interface TaskProgressUpdate {
 
 export type ItemStatus = 'PLANNED' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED' | 'POSTPONED';
 
+export interface TimeSlot {
+  startTime: string;
+  endTime: string;
+}
+
+export interface DailyAvailability {
+  availableHours: number;
+  timeSlots?: TimeSlot[];
+}
+
 export interface StudyPlanItem {
   id: number;
   date: string;
-  startTime: string;
-  endTime: string;
-  moduleId: number;
-  moduleCode: string;
-  moduleName: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  moduleId?: number;
+  moduleCode?: string;
+  moduleName?: string;
   assessmentId?: number;
   assessmentTitle?: string;
   taskId?: number;
@@ -133,5 +143,6 @@ export interface StudyPlan {
 
 export interface WeeklyPlanRequest {
   startDate: string;
-  availability: Record<string, number>;
+  availability?: Record<string, number>;
+  dailyAvailability?: Record<string, DailyAvailability>;
 }

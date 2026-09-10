@@ -123,9 +123,12 @@ export default function Tasks() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: taskApi.delete,
+    mutationFn: (id: number) => taskApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+    onError: (err: any) => {
+      alert("Failed to delete task: " + (err.response?.data?.message || err.message || "Unknown error"));
     },
   });
 
@@ -270,10 +273,15 @@ export default function Tasks() {
                       {t.status === "COMPLETED" ? "Mark Pending" : "✓ Complete"}
                     </button>
                     <button
-                      onClick={() => deleteMutation.mutate(t.id)}
-                      className="text-xs text-red-600 hover:text-red-800"
+                      onClick={() => {
+                        if (window.confirm(`Are you sure you want to delete "${t.title}"?`)) {
+                          deleteMutation.mutate(t.id);
+                        }
+                      }}
+                      disabled={deleteMutation.isPending}
+                      className="text-xs text-red-600 hover:text-red-800 disabled:opacity-50 transition"
                     >
-                      Delete
+                      {deleteMutation.isPending ? "Deleting..." : "Delete"}
                     </button>
                   </div>
                 </div>

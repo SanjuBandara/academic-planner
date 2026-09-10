@@ -131,7 +131,9 @@ export default function Dashboard() {
                     </div>
                     <div className="text-right">
                       <span className="text-xs font-mono font-bold text-slate-700 block">
-                        {item.startTime.slice(0, 5)} - {item.endTime.slice(0, 5)}
+                        {item.startTime && item.endTime
+                          ? `${item.startTime.slice(0, 5)} - ${item.endTime.slice(0, 5)}`
+                          : "Daily Session"}
                       </span>
                       <span className="text-[10px] text-slate-500 block">{item.plannedHours} hrs</span>
                     </div>
