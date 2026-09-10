@@ -1,144 +1,146 @@
 package com.academicplanner.planning;
 
-import com.academicplanner.entity.Assessment;
-import com.academicplanner.entity.Assessment.AssessmentPriority;
+import com.academicplanner.entity.Assessment.AssessmentType;
+import com.academicplanner.planning.model.PlanningCandidate;
+import com.academicplanner.planning.model.PriorityFactors;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
+import java.util.List;
 
 /**
- * Stateless, deterministic calculator for assessment urgency and priority scores.
+ * Stateless, deterministic calculator for planning priority scores.
  *
- * <h2>Urgency classification (days until deadline)</h2>
+ * <h2>Formula</h2>
  * <pre>
- *   &gt; 30 days  → 1.0  (low urgency)
- *  15–30 days  → 1.5  (moderate)
- *   7–14 days  → 2.5  (high)
- *    3–6 days  → 4.0  (very high)
- *    0–2 days  → 6.0  (critical)
- *     overdue  → 7.0  (critical / overdue)
- *   no deadline → 1.0  (default — treat like low urgency)
+ *   priorityScore = typeWeight × creditWeight × urgencyWeight × workloadFactor
  * </pre>
  *
- * <h2>Assessment priority multiplier</h2>
+ * <h2>Type weights (academic importance)</h2>
  * <pre>
- *   LOW      → 1.0
- *   MEDIUM   → 1.5
- *   HIGH     → 2.5
- *   CRITICAL → 4.0
+ *   EXAM         = 5.0
+ *   PROJECT      = 3.0
+ *   ASSIGNMENT   = 2.5
+ *   REPORT       = 2.5
+ *   QUIZ         = 2.0
+ *   PRESENTATION = 2.0
+ *   OTHER        = 1.0
  * </pre>
+ *
+ * <h2>Credit weight</h2>
+ * Normalised: {@code moduleCredits / totalCreditsAcrossAllCandidateModules}.
+ * Candidates with no module (standalone tasks) receive a weight of
+ * {@code 1 / (distinctModuleCount + 1)} to avoid completely suppressing them.
+ *
+ * <h2>Urgency weight</h2>
+ * Derived from {@link DeadlineAnalyzer#urgencyMultiplier(long)}.
+ *
+ * <h2>Workload factor</h2>
+ * {@code remainingHours / maxRemainingHours} across all candidates.
+ * A candidate with 0 remaining hours gets a score of 0 (nothing to schedule).
  */
 @Component
 public class PriorityCalculator {
 
-    // ----- Urgency thresholds -----
+    // ── Type weights ───────────────────────────────────────────────────────
+    public static final double TYPE_EXAM         = 5.0;
+    public static final double TYPE_PROJECT      = 3.0;
+    public static final double TYPE_ASSIGNMENT   = 2.5;
+    public static final double TYPE_REPORT       = 2.5;
+    public static final double TYPE_QUIZ         = 2.0;
+    public static final double TYPE_PRESENTATION = 2.0;
+    public static final double TYPE_OTHER        = 1.0;
 
-    /** Days threshold below which urgency escalates to MODERATE. */
-    public static final int THRESHOLD_MODERATE = 30;
-    /** Days threshold below which urgency escalates to HIGH. */
-    public static final int THRESHOLD_HIGH = 15;
-    /** Days threshold below which urgency escalates to VERY_HIGH. */
-    public static final int THRESHOLD_VERY_HIGH = 7;
-    /** Days threshold below which urgency escalates to CRITICAL. */
-    public static final int THRESHOLD_CRITICAL = 3;
+    private final DeadlineAnalyzer deadlineAnalyzer;
 
-    // ----- Urgency multipliers -----
-    public static final double URGENCY_LOW       = 1.0;
-    public static final double URGENCY_MODERATE  = 1.5;
-    public static final double URGENCY_HIGH      = 2.5;
-    public static final double URGENCY_VERY_HIGH = 4.0;
-    public static final double URGENCY_CRITICAL  = 6.0;
-    public static final double URGENCY_OVERDUE   = 7.0;
-
-    // ----- Priority multipliers -----
-    public static final double PRIORITY_LOW      = 1.0;
-    public static final double PRIORITY_MEDIUM   = 1.5;
-    public static final double PRIORITY_HIGH     = 2.5;
-    public static final double PRIORITY_CRITICAL = 4.0;
-
-    /**
-     * Returns the number of whole days between now and the deadline.
-     * Negative value means the deadline has passed (overdue).
-     */
-    public long daysUntilDeadline(LocalDateTime dueDateTime) {
-        return ChronoUnit.DAYS.between(LocalDateTime.now(), dueDateTime);
+    public PriorityCalculator(DeadlineAnalyzer deadlineAnalyzer) {
+        this.deadlineAnalyzer = deadlineAnalyzer;
     }
 
-    /**
-     * Calculates the deadline urgency multiplier for a given number of days remaining.
-     * A higher multiplier means more study time should be allocated now.
-     *
-     * @param daysRemaining number of days until the deadline (may be negative)
-     * @return urgency multiplier in range [1.0, 7.0]
-     */
-    public double urgencyMultiplier(long daysRemaining) {
-        if (daysRemaining < 0) {
-            return URGENCY_OVERDUE;
-        } else if (daysRemaining < THRESHOLD_CRITICAL) {
-            return URGENCY_CRITICAL;
-        } else if (daysRemaining < THRESHOLD_VERY_HIGH) {
-            return URGENCY_VERY_HIGH;
-        } else if (daysRemaining < THRESHOLD_HIGH) {
-            return URGENCY_HIGH;
-        } else if (daysRemaining < THRESHOLD_MODERATE) {
-            return URGENCY_MODERATE;
-        } else {
-            return URGENCY_LOW;
-        }
-    }
+    // ── Public API ─────────────────────────────────────────────────────────
 
     /**
-     * Calculates the urgency multiplier for an assessment using the current wall-clock time.
-     * If the assessment has no deadline, returns the low-urgency multiplier.
+     * Returns the academic type weight for an assessment type.
+     * Standalone tasks (no type) receive {@link #TYPE_OTHER}.
      */
-    public double urgencyMultiplier(Assessment assessment) {
-        if (assessment.getDueDateTime() == null) {
-            return URGENCY_LOW;
-        }
-        return urgencyMultiplier(daysUntilDeadline(assessment.getDueDateTime()));
-    }
-
-    /**
-     * Returns the priority weight for a given {@link AssessmentPriority} level.
-     */
-    public double priorityMultiplier(AssessmentPriority priority) {
-        if (priority == null) {
-            return PRIORITY_MEDIUM;
-        }
-        return switch (priority) {
-            case LOW      -> PRIORITY_LOW;
-            case MEDIUM   -> PRIORITY_MEDIUM;
-            case HIGH     -> PRIORITY_HIGH;
-            case CRITICAL -> PRIORITY_CRITICAL;
+    public double typeWeight(AssessmentType type) {
+        if (type == null) return TYPE_OTHER;
+        return switch (type) {
+            case EXAM         -> TYPE_EXAM;
+            case PROJECT      -> TYPE_PROJECT;
+            case ASSIGNMENT   -> TYPE_ASSIGNMENT;
+            case REPORT       -> TYPE_REPORT;
+            case QUIZ         -> TYPE_QUIZ;
+            case PRESENTATION -> TYPE_PRESENTATION;
+            case OTHER        -> TYPE_OTHER;
         };
     }
 
     /**
-     * Computes a raw (un-normalized) priority score for a single assessment.
+     * Computes and sets {@link PriorityFactors} on every candidate.
      *
-     * <pre>
-     *   score = creditWeight × urgencyMultiplier × priorityMultiplier × remainingWorkFactor
-     * </pre>
+     * <p>Must be called after {@link WorkloadEstimator} and
+     * {@link DeadlineAnalyzer} have populated their fields.
      *
-     * All four factors are positive real numbers; their product is also positive.
-     * Callers are responsible for normalizing across all assessments before
-     * translating scores into hour allocations.
-     *
-     * @param creditWeight        module credits / total credits (0 < w ≤ 1)
-     * @param urgencyMultiplier   result of {@link #urgencyMultiplier(Assessment)}
-     * @param priorityMultiplier  result of {@link #priorityMultiplier(AssessmentPriority)}
-     * @param remainingWorkFactor remaining hours / max remaining hours across all assessments (0 ≤ f ≤ 1)
-     * @return raw priority score (higher = more time should be allocated)
+     * @param candidates candidates to score
+     * @param now        current time reference (for urgency calculation)
      */
-    public double rawScore(double creditWeight,
-                           double urgencyMultiplier,
-                           double priorityMultiplier,
-                           double remainingWorkFactor) {
-        // Guard against a zero remainingWorkFactor — if no work remains, score is 0.
-        if (remainingWorkFactor <= 0.0) {
-            return 0.0;
+    public void calculateAll(List<PlanningCandidate> candidates,
+                             java.time.LocalDateTime now) {
+        if (candidates.isEmpty()) return;
+
+        // Compute total credits across distinct modules (for credit normalisation)
+        List<com.academicplanner.entity.Module> distinctModules = candidates.stream()
+                .map(PlanningCandidate::getEffectiveModule)
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .toList();
+
+        int totalCredits = distinctModules.stream()
+                .mapToInt(com.academicplanner.entity.Module::getCredits)
+                .sum();
+        if (totalCredits <= 0) totalCredits = 1; // guard against no-module or zero-credits scenarios
+
+        // Count distinct modules for standalone-task fallback credit weight
+        long distinctModuleCount = distinctModules.size();
+        double standaloneCreditWeight = 1.0 / (distinctModuleCount + 1);
+
+        // Max remaining hours (for workload factor normalisation)
+        double maxRemaining = candidates.stream()
+                .mapToDouble(PlanningCandidate::getRemainingWorkHours)
+                .max().orElse(1.0);
+        if (maxRemaining <= 0) maxRemaining = 1.0;
+
+        for (PlanningCandidate c : candidates) {
+            double remaining = c.getRemainingWorkHours();
+            if (remaining <= 0) {
+                // Nothing to schedule — score is 0
+                c.setPriorityFactors(new PriorityFactors(0, 0, 0, 0, 0));
+                continue;
+            }
+
+            // 1. Type weight
+            AssessmentType type = c.getAssessment() != null ? c.getAssessment().getType() : null;
+            double tw = typeWeight(type);
+
+            // 2. Credit weight
+            double cw;
+            com.academicplanner.entity.Module effectiveMod = c.getEffectiveModule();
+            if (effectiveMod != null && effectiveMod.getCredits() > 0) {
+                cw = (double) effectiveMod.getCredits() / totalCredits;
+            } else {
+                cw = standaloneCreditWeight;
+            }
+
+            // 3. Urgency weight
+            double uw = deadlineAnalyzer.urgencyMultiplier(c, now);
+
+            // 4. Workload factor
+            double wf = remaining / maxRemaining;
+
+            // 5. Final score
+            double score = tw * cw * uw * wf;
+
+            c.setPriorityFactors(new PriorityFactors(tw, cw, uw, wf, score));
         }
-        return creditWeight * urgencyMultiplier * priorityMultiplier * remainingWorkFactor;
     }
 }

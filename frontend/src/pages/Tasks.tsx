@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "../components/Layout";
 import { taskApi } from "../api/taskApi";
 import { moduleApi } from "../api/moduleApi";
+import { assessmentApi } from "../api/assessmentApi";
 import { TaskRequest, PriorityLevel } from "../types/academic";
 
 export default function Tasks() {
@@ -17,8 +18,8 @@ export default function Tasks() {
     title: "",
     description: "",
     moduleId: undefined,
-    estimatedHours: 2,
-    priority: "MEDIUM",
+    assessmentId: undefined,
+    dueDateTime: undefined,
     status: "TODO",
   });
 
@@ -32,8 +33,65 @@ export default function Tasks() {
     queryFn: moduleApi.getAll,
   });
 
+  // Query assessments for the currently selected module in the modal
+  const { data: moduleAssessments = [] } = useQuery({
+    queryKey: ["module-assessments", form.moduleId],
+    queryFn: () => (form.moduleId ? assessmentApi.getByModule(form.moduleId) : Promise.resolve([])),
+    enabled: !!form.moduleId,
+  });
+
+  const selectedAssessment = useMemo(
+    () => moduleAssessments.find((a) => a.id === form.assessmentId) || null,
+    [moduleAssessments, form.assessmentId]
+  );
+
+  const selectedModule = useMemo(
+    () => modules.find((m) => m.id === form.moduleId) || null,
+    [modules, form.moduleId]
+  );
+
+  // Automatic calculation of workload hours and priority
+  const autoPreview = useMemo(() => {
+    // 1. Workload hours
+    let hours = 2.0;
+    if (selectedAssessment) {
+      if (selectedAssessment.type === "EXAM" || selectedAssessment.type === "PROJECT") hours = 3.0;
+      else if (selectedAssessment.type === "ASSIGNMENT") hours = 2.0;
+      else if (selectedAssessment.type === "QUIZ") hours = 1.5;
+    } else if (selectedModule && selectedModule.credits >= 4) {
+      hours = 2.5;
+    }
+
+    // 2. Academic priority
+    let priority: PriorityLevel = "MEDIUM";
+    const effectiveDeadline = form.dueDateTime || selectedAssessment?.dueDateTime;
+
+    if (effectiveDeadline) {
+      const diffHours = (new Date(effectiveDeadline).getTime() - Date.now()) / (1000 * 60 * 60);
+      if (diffHours <= 48) {
+        priority = "CRITICAL";
+      } else if (diffHours <= 24 * 6) {
+        priority = "HIGH";
+      } else if (diffHours <= 24 * 14) {
+        priority = "MEDIUM";
+      } else if (selectedAssessment?.type === "EXAM" || selectedAssessment?.type === "PROJECT") {
+        priority = "MEDIUM";
+      } else {
+        priority = "LOW";
+      }
+    } else if (selectedAssessment) {
+      if (selectedAssessment.type === "EXAM" || selectedAssessment.type === "PROJECT") priority = "HIGH";
+      else if (selectedAssessment.type === "ASSIGNMENT" || selectedAssessment.type === "QUIZ") priority = "MEDIUM";
+      else priority = "LOW";
+    } else if (selectedModule && selectedModule.credits >= 4) {
+      priority = "MEDIUM";
+    }
+
+    return { hours, priority };
+  }, [selectedAssessment, selectedModule, form.dueDateTime]);
+
   const createMutation = useMutation({
-    mutationFn: taskApi.create,
+    mutationFn: (payload: TaskRequest) => taskApi.create(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
       setShowModal(false);
@@ -41,8 +99,8 @@ export default function Tasks() {
         title: "",
         description: "",
         moduleId: undefined,
-        estimatedHours: 2,
-        priority: "MEDIUM",
+        assessmentId: undefined,
+        dueDateTime: undefined,
         status: "TODO",
       });
     },
@@ -83,7 +141,7 @@ export default function Tasks() {
           <div>
             <h1 className="text-3xl font-serif font-bold text-ink">Academic Task Board</h1>
             <p className="text-slate-600 text-sm mt-1">
-              Track daily tasks, remaining work hours, and study progress.
+              Track daily tasks, remaining work hours, and study progress with automatic workload & priority assignment.
             </p>
           </div>
           <button
@@ -131,18 +189,24 @@ export default function Tasks() {
                 }`}
               >
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                        t.priority === "HIGH"
-                          ? "bg-red-100 text-red-700"
-                          : t.priority === "MEDIUM"
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-slate-100 text-slate-700"
-                      }`}
-                    >
-                      {t.priority}
-                    </span>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                          t.priority === "CRITICAL"
+                            ? "bg-red-200 text-red-800 border border-red-300 font-extrabold"
+                            : t.priority === "HIGH"
+                            ? "bg-red-100 text-red-700 font-bold"
+                            : t.priority === "MEDIUM"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-slate-100 text-slate-700"
+                        }`}
+                      >
+                        {t.priority}
+                      </span>
+                      <span className="text-[9px] text-slate-400 font-mono">AUTO</span>
+                    </div>
+
                     {t.moduleName && (
                       <span className="text-[10px] font-mono font-semibold px-2 py-0.5 bg-ink text-gold rounded">
                         {t.moduleName}
@@ -158,8 +222,22 @@ export default function Tasks() {
                     {t.title}
                   </h3>
 
+                  {t.assessmentTitle && (
+                    <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-800 text-[11px] font-medium border border-amber-200">
+                      <span>📑</span>
+                      <span>{t.assessmentTitle}</span>
+                    </div>
+                  )}
+
                   {t.description && (
                     <p className="text-xs text-slate-500 line-clamp-2">{t.description}</p>
+                  )}
+
+                  {t.dueDateTime && (
+                    <p className="text-[11px] text-slate-500 flex items-center gap-1">
+                      <span>⏰</span>
+                      <span>Due: {new Date(t.dueDateTime).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>
+                    </p>
                   )}
                 </div>
 
@@ -208,19 +286,29 @@ export default function Tasks() {
         {showModal && (
           <div className="fixed inset-0 bg-ink/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-xl border border-hairline space-y-4">
-              <h3 className="text-lg font-serif font-bold text-ink border-b border-hairline pb-2">
-                Create Task
-              </h3>
+              <div className="flex items-center justify-between border-b border-hairline pb-2">
+                <h3 className="text-lg font-serif font-bold text-ink">
+                  Create Task
+                </h3>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 bg-gold/20 text-ink rounded">
+                  AUTO-ALLOCATED
+                </span>
+              </div>
+
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
-                  createMutation.mutate(form);
+                  createMutation.mutate({
+                    ...form,
+                    estimatedHours: autoPreview.hours,
+                    priority: autoPreview.priority,
+                  });
                 }}
                 className="space-y-4"
               >
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Task Title
+                    Task Title *
                   </label>
                   <input
                     type="text"
@@ -228,7 +316,20 @@ export default function Tasks() {
                     placeholder="e.g. Read Chapter 4 / Implement Binary Search"
                     value={form.title}
                     onChange={(e) => setForm({ ...form, title: e.target.value })}
-                    className="w-full px-3 py-2 border border-hairline rounded-md text-sm outline-none"
+                    className="w-full px-3 py-2 border border-hairline rounded-md text-sm outline-none focus:border-gold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Description (Optional)
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Notes, topics covered, or instructions..."
+                    value={form.description || ""}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    className="w-full px-3 py-2 border border-hairline rounded-md text-sm outline-none focus:border-gold resize-none"
                   />
                 </div>
 
@@ -238,49 +339,93 @@ export default function Tasks() {
                   </label>
                   <select
                     value={form.moduleId || ""}
-                    onChange={(e) =>
-                      setForm({ ...form, moduleId: e.target.value ? parseInt(e.target.value) : undefined })
-                    }
+                    onChange={(e) => {
+                      const modId = e.target.value ? parseInt(e.target.value) : undefined;
+                      setForm({ ...form, moduleId: modId, assessmentId: undefined });
+                    }}
                     className="w-full px-3 py-2 border border-hairline rounded-md text-sm outline-none bg-white"
                   >
                     <option value="">-- No Module --</option>
                     {modules.map((m) => (
                       <option key={m.id} value={m.id}>
-                        {m.code} - {m.name}
+                        {m.code} - {m.name} ({m.credits} credits)
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                {form.moduleId && moduleAssessments.length > 0 && (
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Est. Hours
-                    </label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0.5"
-                      required
-                      value={form.estimatedHours}
-                      onChange={(e) => setForm({ ...form, estimatedHours: parseFloat(e.target.value) || 1 })}
-                      className="w-full px-3 py-2 border border-hairline rounded-md text-sm outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Priority
+                      Link to Assessment (Optional)
                     </label>
                     <select
-                      value={form.priority}
-                      onChange={(e) => setForm({ ...form, priority: e.target.value as PriorityLevel })}
+                      value={form.assessmentId || ""}
+                      onChange={(e) => {
+                        const assId = e.target.value ? parseInt(e.target.value) : undefined;
+                        const matched = moduleAssessments.find((a) => a.id === assId);
+                        setForm({
+                          ...form,
+                          assessmentId: assId,
+                          dueDateTime: form.dueDateTime || matched?.dueDateTime || undefined,
+                        });
+                      }}
                       className="w-full px-3 py-2 border border-hairline rounded-md text-sm outline-none bg-white"
                     >
-                      <option value="HIGH">High</option>
-                      <option value="MEDIUM">Medium</option>
-                      <option value="LOW">Low</option>
+                      <option value="">-- None (General Module Task) --</option>
+                      {moduleAssessments.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.title} ({a.type}) - Due {new Date(a.dueDateTime).toLocaleDateString()}
+                        </option>
+                      ))}
                     </select>
                   </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Due Date & Time (Optional)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={form.dueDateTime || ""}
+                    onChange={(e) => setForm({ ...form, dueDateTime: e.target.value || undefined })}
+                    className="w-full px-3 py-2 border border-hairline rounded-md text-sm outline-none bg-white"
+                  />
+                </div>
+
+                {/* Automatic Workload & Priority Indicator */}
+                <div className="p-3 bg-paper rounded-lg border border-hairline space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-700 flex items-center gap-1.5">
+                      <span>⚡</span> Auto-Calculated Planning Values:
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs">
+                    <div>
+                      <span className="text-slate-500">Estimated Workload: </span>
+                      <b className="text-ink font-mono">{autoPreview.hours}h</b>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Academic Priority: </span>
+                      <span
+                        className={`font-bold px-1.5 py-0.5 rounded text-[11px] ${
+                          autoPreview.priority === "CRITICAL"
+                            ? "bg-red-200 text-red-800"
+                            : autoPreview.priority === "HIGH"
+                            ? "bg-red-100 text-red-700"
+                            : autoPreview.priority === "MEDIUM"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-slate-100 text-slate-700"
+                        }`}
+                      >
+                        {autoPreview.priority}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    Hours and priority are computed automatically based on assessment type, module credits, and deadline urgency. You do not need to enter them manually.
+                  </p>
                 </div>
 
                 <div className="flex justify-end space-x-3 pt-4 border-t border-hairline">
@@ -293,9 +438,10 @@ export default function Tasks() {
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-gold hover:bg-gold-dark text-ink font-semibold text-xs rounded shadow"
+                    disabled={createMutation.isPending}
+                    className="px-4 py-2 bg-gold hover:bg-gold-dark text-ink font-semibold text-xs rounded shadow transition disabled:opacity-50"
                   >
-                    Save Task
+                    {createMutation.isPending ? "Saving..." : "Save Task"}
                   </button>
                 </div>
               </form>

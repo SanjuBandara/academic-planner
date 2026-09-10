@@ -7,11 +7,13 @@ import com.academicplanner.entity.StudyPlan.PlanType;
 import com.academicplanner.entity.StudyPlanItem.ItemStatus;
 import com.academicplanner.exception.ResourceNotFoundException;
 import com.academicplanner.planning.PlanningEngine;
+import com.academicplanner.planning.model.PlanningResult;
 import com.academicplanner.repository.AssessmentRepository;
 import com.academicplanner.repository.StudyPlanItemRepository;
 import com.academicplanner.repository.StudyPlanRepository;
 import com.academicplanner.repository.TaskRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +22,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class StudyPlanService {
@@ -64,11 +67,17 @@ public class StudyPlanService {
         List<Assessment> assessments = assessmentRepository.findActivePlanningAssessments(user.getId());
         List<Task> tasks = taskRepository.findActivePlanningTasks(user.getId());
 
-        List<StudyPlanItem> items = planningEngine.generateItems(studyPlan, assessments, tasks, dailyHours);
-        items = studyPlanItemRepository.saveAll(items);
+        // Run the full deterministic planning pipeline
+        PlanningResult result = planningEngine.generatePlan(studyPlan, assessments, tasks, dailyHours);
 
-        double totalPlanned = items.stream().mapToDouble(StudyPlanItem::getPlannedHours).sum();
-        studyPlan.setTotalPlannedHours(totalPlanned);
+        // Log warnings so they are visible in server logs (future: expose via API)
+        if (result.hasWarnings()) {
+            log.warn("[StudyPlanService] Planning warnings for user {}: {}", user.getId(), result.feasibilityWarnings());
+        }
+
+        List<StudyPlanItem> items = studyPlanItemRepository.saveAll(result.items());
+
+        studyPlan.setTotalPlannedHours(result.totalPlannedHours());
         studyPlan.setItems(items);
         studyPlanRepository.save(studyPlan);
 

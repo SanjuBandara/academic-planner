@@ -1,110 +1,239 @@
 package com.academicplanner.planning;
 
+import com.academicplanner.planning.model.PlanningCandidate;
+import com.academicplanner.planning.model.PlanningCandidate.FeasibilityStatus;
 import org.springframework.stereotype.Component;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.time.LocalDate;
+import java.util.*;
 
 /**
- * Translates raw priority scores into concrete hour allocations.
+ * Translates priority scores and feasibility analysis into concrete hour
+ * allocations per candidate.
  *
- * <p>The allocation is proportional to normalized scores so that
- * all available hours are distributed fully (no wasted capacity),
- * while each assessment receives hours proportional to its urgency,
- * credit weight, and remaining workload.
+ * <h2>Algorithm (deadline-constrained reservation)</h2>
+ * <ol>
+ *   <li>Sort candidates by scheduling urgency:
+ *       {@code IMPOSSIBLE} first, then {@code AT_RISK}, then {@code FEASIBLE};
+ *       within each group by earliest effective deadline, then by priority score.</li>
+ *   <li>For each candidate, compute the <em>capacity budget</em>:
+ *       {@code min(remainingWorkHours, availableHoursBeforeDeadline)}.</li>
+ *   <li>Deduct reservations from a per-day mutable capacity copy so that
+ *       allocating hours for an early deadline genuinely reduces what is
+ *       available for later deadlines.</li>
+ *   <li>After all deadline-constrained reservations, distribute any
+ *       leftover capacity proportionally by priority score (uncapped up to
+ *       remaining work).</li>
+ * </ol>
  *
- * <p>Allocation is also capped at each assessment's remaining work —
- * we never allocate more hours than the student actually needs.
+ * <p>Invariants guaranteed by this allocator:
+ * <ul>
+ *   <li>allocated ≤ remainingWorkHours for every candidate.</li>
+ *   <li>Σ(allocated) ≤ totalAvailableHours.</li>
+ *   <li>If a deadline is IMPOSSIBLE, up to availableHoursBeforeDeadline are
+ *       still reserved so partial progress can be made.</li>
+ * </ul>
  */
 @Component
 public class WorkloadAllocator {
 
     /**
-     * Distributes {@code totalAvailableHours} among assessments according to their raw scores,
-     * capping each assessment's allocation at its remaining hours.
+     * Populates {@code allocatedHours} on every candidate.
      *
-     * <p>Algorithm:
-     * <ol>
-     *   <li>Normalize raw scores to proportions (sum = 1.0).</li>
-     *   <li>For each assessment, compute proportional hours.</li>
-     *   <li>Cap at {@code remainingHours} for that assessment.</li>
-     *   <li>Redistribute any leftover hours from capped assessments proportionally among uncapped ones.</li>
-     *   <li>Repeat redistribution until stable (converges quickly in practice).</li>
-     * </ol>
-     *
-     * @param scores           map of assessmentId → raw priority score
-     * @param remainingHours   map of assessmentId → remaining study hours needed
-     * @param totalAvailable   total hours to distribute
-     * @return map of assessmentId → allocated hours
+     * @param candidates candidates with remaining work, available hours, feasibility, and score set
+     * @param dailyHours mutable copy of the daily availability (will be consumed internally)
      */
-    public Map<Long, Double> allocate(Map<Long, Double> scores,
-                                      Map<Long, Double> remainingHours,
-                                      double totalAvailable) {
+    public void allocate(List<PlanningCandidate> candidates,
+                         Map<LocalDate, Double> dailyHours) {
 
-        Map<Long, Double> allocation = new LinkedHashMap<>();
+        if (candidates.isEmpty()) return;
 
-        // Initialize all allocations to 0
-        for (Long id : scores.keySet()) {
-            allocation.put(id, 0.0);
-        }
+        // Working copy of daily capacity — we consume it as we reserve hours
+        Map<LocalDate, Double> remainingCapacity = new TreeMap<>(dailyHours);
 
-        if (scores.isEmpty() || totalAvailable <= 0) {
-            return allocation;
-        }
+        // ── Step 1: Sort by deadline urgency for reservation pass ──────────
+        List<PlanningCandidate> sorted = new ArrayList<>(candidates);
+        sorted.sort(deadlineUrgencyComparator());
 
-        double hoursToDistribute = totalAvailable;
-        Map<Long, Double> workingScores = new LinkedHashMap<>(scores);
-
-        // Iterative capped allocation (max 20 iterations for safety)
-        for (int iteration = 0; iteration < 20; iteration++) {
-            double scoreSum = workingScores.values().stream().mapToDouble(Double::doubleValue).sum();
-            if (scoreSum <= 0 || hoursToDistribute <= 0) break;
-
-            double leftover = 0.0;
-            Map<Long, Double> iterAllocation = new LinkedHashMap<>();
-
-            for (Map.Entry<Long, Double> entry : workingScores.entrySet()) {
-                Long id = entry.getKey();
-                double proportion = entry.getValue() / scoreSum;
-                double proposed = proportion * hoursToDistribute;
-                double cap = remainingHours.getOrDefault(id, Double.MAX_VALUE);
-
-                if (proposed > cap) {
-                    iterAllocation.put(id, cap);
-                    leftover += (proposed - cap);
-                    workingScores.put(id, 0.0); // exclude from future redistributions
-                } else {
-                    iterAllocation.put(id, proposed);
-                }
+        // ── Step 2: Deadline-constrained reservation pass ──────────────────
+        for (PlanningCandidate c : sorted) {
+            if (c.getRemainingWorkHours() <= 0) {
+                c.setAllocatedHours(0);
+                continue;
             }
 
-            // Add iteration results to cumulative allocation
-            for (Map.Entry<Long, Double> entry : iterAllocation.entrySet()) {
-                allocation.merge(entry.getKey(), entry.getValue(), Double::sum);
-            }
+            double needed   = c.getRemainingWorkHours();
+            double deadline = c.getAvailableHoursBeforeDeadline();
 
-            hoursToDistribute = leftover;
+            // Reserve up to min(needed, deadline-capacity)
+            double reserve  = Math.min(needed, deadline);
 
-            // If no scores remain eligible for redistribution, stop
-            if (workingScores.values().stream().allMatch(s -> s <= 0)) break;
+            // Consume from per-day capacity before the deadline
+            double consumed = consumeCapacityBeforeDeadline(reserve, c.getEffectiveDeadline(), remainingCapacity);
+            c.setAllocatedHours(consumed);
         }
 
-        // Round to 2 decimal places for cleaner display
-        allocation.replaceAll((id, hours) -> Math.round(hours * 100.0) / 100.0);
-        return allocation;
+        // ── Step 3: Redistribute leftover capacity by priority score ───────
+        double leftover = remainingCapacity.values().stream().mapToDouble(Double::doubleValue).sum();
+        if (leftover > 0.01) {
+            redistributeLeftover(candidates, leftover, remainingCapacity);
+        }
+
+        // ── Step 4: Round to 15-minute increments and enforce caps ─────────
+        for (PlanningCandidate c : candidates) {
+            double rounded = Math.round(c.getAllocatedHours() * 4.0) / 4.0;
+            double maxPossible = c.getEffectiveDeadline() != null
+                    ? Math.min(c.getRemainingWorkHours(), c.getAvailableHoursBeforeDeadline())
+                    : c.getRemainingWorkHours();
+            rounded = Math.min(rounded, maxPossible);
+            c.setAllocatedHours(Math.max(0.0, rounded));
+        }
+    }
+
+    // ── Private helpers ────────────────────────────────────────────────────
+
+    /**
+     * Consumes up to {@code hours} from remaining daily capacity, only using
+     * days that are on or before the effective deadline date.
+     *
+     * @return actual hours consumed (≤ requested)
+     */
+    private double consumeCapacityBeforeDeadline(double hours,
+                                                  java.time.LocalDateTime deadline,
+                                                  Map<LocalDate, Double> remainingCapacity) {
+        double consumed = 0.0;
+        for (Map.Entry<LocalDate, Double> entry : new TreeMap<>(remainingCapacity).entrySet()) {
+            if (consumed >= hours) break;
+            LocalDate date  = entry.getKey();
+
+            // Only use days on or before the deadline date
+            if (deadline != null && date.isAfter(deadline.toLocalDate())) continue;
+
+            double avail = remainingCapacity.getOrDefault(date, 0.0);
+            if (avail <= 0) continue;
+
+            double usableOnDay = avail;
+            if (deadline != null && date.isEqual(deadline.toLocalDate())) {
+                usableOnDay = Math.min(avail, hoursAvailableOnDeadlineDay(deadline.toLocalTime(), avail));
+            }
+
+            double take = Math.min(usableOnDay, hours - consumed);
+            if (take <= 0) continue;
+
+            remainingCapacity.put(date, avail - take);
+            consumed += take;
+        }
+        return consumed;
+    }
+
+    private double hoursAvailableOnDeadlineDay(java.time.LocalTime deadlineTime, double dayCapacity) {
+        if (!deadlineTime.isAfter(SessionScheduler.DEFAULT_START)) {
+            return 0.0;
+        }
+        double hoursUntilDeadline = (double) SessionScheduler.DEFAULT_START.until(deadlineTime, java.time.temporal.ChronoUnit.MINUTES) / 60.0;
+        return Math.min(dayCapacity, hoursUntilDeadline);
+    }
+
+    /**
+     * Distributes {@code leftover} hours among candidates that still need
+     * more time, proportionally by priority score.
+     */
+    private void redistributeLeftover(List<PlanningCandidate> candidates,
+                                       double leftover,
+                                       Map<LocalDate, Double> remainingCapacity) {
+        // Only candidates that still have unmet work and unexhausted deadline capacity are eligible
+        List<PlanningCandidate> eligible = candidates.stream()
+                .filter(c -> {
+                    double maxPossible = c.getEffectiveDeadline() != null
+                            ? Math.min(c.getRemainingWorkHours(), c.getAvailableHoursBeforeDeadline())
+                            : c.getRemainingWorkHours();
+                    return maxPossible > c.getAllocatedHours() + 0.01;
+                })
+                .toList();
+
+        if (eligible.isEmpty()) return;
+
+        double totalScore = eligible.stream()
+                .mapToDouble(PlanningCandidate::getPriorityScore)
+                .sum();
+        if (totalScore <= 0) return;
+
+        // Proportional distribution (iterative with cap)
+        Map<String, Double> extra = new LinkedHashMap<>();
+        for (PlanningCandidate c : eligible) {
+            extra.put(c.candidateKey(), 0.0);
+        }
+
+        double toDistribute = leftover;
+        for (int iter = 0; iter < 20 && toDistribute > 0.01; iter++) {
+            double scoreSum = eligible.stream()
+                    .filter(c -> {
+                        double maxPossible = c.getEffectiveDeadline() != null
+                                ? Math.min(c.getRemainingWorkHours(), c.getAvailableHoursBeforeDeadline())
+                                : c.getRemainingWorkHours();
+                        return extra.get(c.candidateKey()) < maxPossible - c.getAllocatedHours();
+                    })
+                    .mapToDouble(PlanningCandidate::getPriorityScore)
+                    .sum();
+            if (scoreSum <= 0) break;
+
+            double overflow = 0.0;
+            for (PlanningCandidate c : eligible) {
+                double alreadyExtra = extra.get(c.candidateKey());
+                double maxPossible = c.getEffectiveDeadline() != null
+                        ? Math.min(c.getRemainingWorkHours(), c.getAvailableHoursBeforeDeadline())
+                        : c.getRemainingWorkHours();
+                double stillNeed = maxPossible - c.getAllocatedHours() - alreadyExtra;
+                if (stillNeed <= 0) continue;
+
+                double share = (c.getPriorityScore() / scoreSum) * toDistribute;
+                double add   = Math.min(share, stillNeed);
+                extra.put(c.candidateKey(), alreadyExtra + add);
+                overflow += (share - add);
+            }
+            toDistribute = overflow;
+        }
+
+        // Apply extra allocations
+        for (PlanningCandidate c : eligible) {
+            double add = extra.getOrDefault(c.candidateKey(), 0.0);
+            c.setAllocatedHours(c.getAllocatedHours() + add);
+        }
+    }
+
+    /**
+     * Comparator that puts the most time-constrained candidates first:
+     * IMPOSSIBLE → AT_RISK → FEASIBLE, then earliest deadline, then highest score.
+     */
+    private Comparator<PlanningCandidate> deadlineUrgencyComparator() {
+        return Comparator
+                // Higher feasibility risk first
+                .comparingInt((PlanningCandidate c) -> feasibilityOrder(c.getFeasibilityStatus()))
+                // Earlier deadline first (null = no deadline = last)
+                .thenComparing(c -> c.getEffectiveDeadline() == null
+                                ? java.time.LocalDateTime.MAX
+                                : c.getEffectiveDeadline())
+                // Higher priority score first (reversed)
+                .thenComparingDouble(c -> -c.getPriorityScore());
+    }
+
+    private int feasibilityOrder(FeasibilityStatus status) {
+        return switch (status) {
+            case IMPOSSIBLE_WITH_CURRENT_AVAILABILITY -> 0;
+            case AT_RISK                              -> 1;
+            case FEASIBLE                             -> 2;
+        };
     }
 
     /**
      * Normalizes a raw score map so values sum to 1.0.
-     * Returns an empty map if all scores are 0.
+     * Kept for backward compatibility; unused internally by the new algorithm.
      */
-    public Map<Long, Double> normalize(Map<Long, Double> rawScores) {
+    public Map<String, Double> normalize(Map<String, Double> rawScores) {
         double total = rawScores.values().stream().mapToDouble(Double::doubleValue).sum();
-        if (total <= 0) {
-            return new LinkedHashMap<>(rawScores);
-        }
-        Map<Long, Double> normalized = new LinkedHashMap<>();
-        rawScores.forEach((id, score) -> normalized.put(id, score / total));
+        if (total <= 0) return new LinkedHashMap<>(rawScores);
+        Map<String, Double> normalized = new LinkedHashMap<>();
+        rawScores.forEach((k, v) -> normalized.put(k, v / total));
         return normalized;
     }
 }

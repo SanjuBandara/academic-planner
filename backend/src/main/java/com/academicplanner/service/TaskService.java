@@ -55,9 +55,27 @@ public class TaskService {
         if (request.assessmentId() != null) {
             assessment = assessmentRepository.findByIdAndModule_Semester_User_Id(request.assessmentId(), user.getId())
                     .orElseThrow(() -> new ResourceNotFoundException("Assessment not found: " + request.assessmentId()));
+            if (module == null && assessment.getModule() != null) {
+                module = assessment.getModule();
+            }
         }
 
-        Double hours = request.estimatedHours() != null ? request.estimatedHours() : 1.0;
+        LocalDateTime dueDateTime = request.dueDateTime();
+        if (dueDateTime == null && assessment != null && assessment.getDueDateTime() != null) {
+            dueDateTime = assessment.getDueDateTime();
+        }
+
+        // Automatic hours calculation if not provided by user
+        Double hours = request.estimatedHours();
+        if (hours == null || hours <= 0) {
+            hours = calculateAutomaticHours(assessment, module);
+        }
+
+        // Automatic priority calculation if not provided by user
+        TaskPriority priority = request.priority();
+        if (priority == null) {
+            priority = calculateAutomaticPriority(assessment, module, dueDateTime);
+        }
 
         Task task = Task.builder()
                 .user(user)
@@ -67,9 +85,9 @@ public class TaskService {
                 .description(request.description())
                 .estimatedHours(hours)
                 .remainingHours(hours)
-                .priority(request.priority() != null ? request.priority() : TaskPriority.MEDIUM)
+                .priority(priority)
                 .status(request.status() != null ? request.status() : TaskStatus.TODO)
-                .dueDateTime(request.dueDateTime())
+                .dueDateTime(dueDateTime)
                 .build();
 
         return TaskResponse.from(taskRepository.save(task));
@@ -159,5 +177,62 @@ public class TaskService {
         Task task = taskRepository.findByIdAndUser(id, user)
                 .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + id));
         taskRepository.delete(task);
+    }
+
+    // ── Automatic calculation helpers ───────────────────────────────────────
+
+    private double calculateAutomaticHours(Assessment assessment, Module module) {
+        if (assessment != null && assessment.getType() != null) {
+            return switch (assessment.getType()) {
+                case EXAM, PROJECT -> 3.0;
+                case ASSIGNMENT, REPORT -> 2.0;
+                case QUIZ, PRESENTATION -> 1.5;
+                case OTHER -> 2.0;
+            };
+        }
+        if (module != null && module.getCredits() >= 4) {
+            return 2.5;
+        }
+        return 2.0; // standard 2-hour default study block
+    }
+
+    private TaskPriority calculateAutomaticPriority(Assessment assessment, Module module, LocalDateTime dueDateTime) {
+        LocalDateTime effectiveDeadline = dueDateTime;
+        if (effectiveDeadline == null && assessment != null) {
+            effectiveDeadline = assessment.getDueDateTime();
+        }
+
+        if (effectiveDeadline != null) {
+            long hoursUntil = java.time.temporal.ChronoUnit.HOURS.between(LocalDateTime.now(), effectiveDeadline);
+            if (hoursUntil <= 48) { // overdue or within 2 days
+                return TaskPriority.CRITICAL;
+            }
+            if (hoursUntil <= 24 * 6) { // 3–6 days
+                return TaskPriority.HIGH;
+            }
+            if (hoursUntil <= 24 * 14) { // 7–14 days
+                return TaskPriority.MEDIUM;
+            }
+            // > 14 days
+            if (assessment != null && (assessment.getType() == Assessment.AssessmentType.EXAM || assessment.getType() == Assessment.AssessmentType.PROJECT)) {
+                return TaskPriority.MEDIUM;
+            }
+            return TaskPriority.LOW;
+        }
+
+        // No deadline given — derive from academic importance
+        if (assessment != null && assessment.getType() != null) {
+            return switch (assessment.getType()) {
+                case EXAM, PROJECT -> TaskPriority.HIGH;
+                case ASSIGNMENT, REPORT, QUIZ, PRESENTATION -> TaskPriority.MEDIUM;
+                case OTHER -> TaskPriority.LOW;
+            };
+        }
+
+        if (module != null && module.getCredits() >= 4) {
+            return TaskPriority.MEDIUM;
+        }
+
+        return TaskPriority.MEDIUM;
     }
 }

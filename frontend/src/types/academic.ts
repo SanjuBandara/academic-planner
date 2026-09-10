@@ -38,7 +38,7 @@ export interface ModuleRequest {
 }
 
 export type AssessmentType = 'ASSIGNMENT' | 'EXAM' | 'QUIZ' | 'PROJECT';
-export type PriorityLevel = 'HIGH' | 'MEDIUM' | 'LOW';
+export type PriorityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 export type AssessmentStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 
 export interface Assessment {

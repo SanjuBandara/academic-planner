@@ -32,6 +32,7 @@ const TYPE_META: Record<AssessmentType, { label: string; icon: string; bg: strin
 };
 
 const PRIORITY_META: Record<PriorityLevel, { label: string; cls: string; dot: string }> = {
+  CRITICAL: { label: "Critical", cls: "bg-red-200 text-red-900 border-red-300 font-bold", dot: "bg-red-600" },
   HIGH: { label: "High", cls: "bg-rose-100 text-rose-800 border-rose-200", dot: "bg-rose-500" },
   MEDIUM: { label: "Medium", cls: "bg-amber-100 text-amber-800 border-amber-200", dot: "bg-amber-400" },
   LOW: { label: "Low", cls: "bg-slate-100 text-slate-700 border-slate-200", dot: "bg-slate-400" },
