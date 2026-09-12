@@ -12,6 +12,7 @@ import com.academicplanner.entity.User;
 import com.academicplanner.exception.ResourceNotFoundException;
 import com.academicplanner.repository.AssessmentRepository;
 import com.academicplanner.repository.ModuleRepository;
+import com.academicplanner.repository.StudyPlanItemRepository;
 import com.academicplanner.repository.TaskRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,7 @@ public class TaskService {
     private final TaskRepository taskRepository;
     private final ModuleRepository moduleRepository;
     private final AssessmentRepository assessmentRepository;
+    private final StudyPlanItemRepository studyPlanItemRepository;
 
     @Transactional(readOnly = true)
     public List<TaskResponse> getAllForUser(User user) {
@@ -51,36 +53,20 @@ public class TaskService {
                     .orElseThrow(() -> new ResourceNotFoundException("Module not found: " + request.moduleId()));
         }
 
-        Assessment assessment = null;
-        if (request.assessmentId() != null) {
-            assessment = assessmentRepository.findByIdAndModule_Semester_User_Id(request.assessmentId(), user.getId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Assessment not found: " + request.assessmentId()));
-            if (module == null && assessment.getModule() != null) {
-                module = assessment.getModule();
-            }
-        }
-
         LocalDateTime dueDateTime = request.dueDateTime();
-        if (dueDateTime == null && assessment != null && assessment.getDueDateTime() != null) {
-            dueDateTime = assessment.getDueDateTime();
-        }
 
-        // Automatic hours calculation if not provided by user
+        // Automatic hours calculation fallback if not provided by user
         Double hours = request.estimatedHours();
         if (hours == null || hours <= 0) {
-            hours = calculateAutomaticHours(assessment, module);
+            hours = calculateAutomaticHours(module);
         }
 
-        // Automatic priority calculation if not provided by user
-        TaskPriority priority = request.priority();
-        if (priority == null) {
-            priority = calculateAutomaticPriority(assessment, module, dueDateTime);
-        }
+        // Priority is user-selected, default to MEDIUM if not provided
+        TaskPriority priority = request.priority() != null ? request.priority() : TaskPriority.MEDIUM;
 
         Task task = Task.builder()
                 .user(user)
                 .module(module)
-                .assessment(assessment)
                 .title(request.title())
                 .description(request.description())
                 .estimatedHours(hours)
@@ -104,14 +90,6 @@ public class TaskService {
             task.setModule(module);
         } else {
             task.setModule(null);
-        }
-
-        if (request.assessmentId() != null) {
-            Assessment assessment = assessmentRepository.findByIdAndModule_Semester_User_Id(request.assessmentId(), user.getId())
-                    .orElseThrow(() -> new ResourceNotFoundException("Assessment not found: " + request.assessmentId()));
-            task.setAssessment(assessment);
-        } else {
-            task.setAssessment(null);
         }
 
         task.setTitle(request.title());
@@ -140,7 +118,7 @@ public class TaskService {
         Task task = taskRepository.findByIdAndUser(id, user)
                 .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + id));
 
-        double currentRemaining = task.getRemainingHours() != null ? task.getRemainingHours() : task.getEstimatedHours();
+        double currentRemaining = task.getRemainingHours() != null ? task.getRemainingHours() : (task.getEstimatedHours() != null ? task.getEstimatedHours() : 0.0);
         double newRemaining = Math.max(0.0, currentRemaining - update.workedHours());
         task.setRemainingHours(newRemaining);
 
@@ -161,7 +139,7 @@ public class TaskService {
 
         if (task.getStatus() == TaskStatus.COMPLETED) {
             task.setStatus(TaskStatus.IN_PROGRESS);
-            task.setRemainingHours(task.getEstimatedHours() > 0 ? task.getEstimatedHours() : 1.0);
+            task.setRemainingHours(task.getEstimatedHours() != null && task.getEstimatedHours() > 0 ? task.getEstimatedHours() : 1.0);
             task.setCompletedAt(null);
         } else {
             task.setStatus(TaskStatus.COMPLETED);
@@ -176,63 +154,16 @@ public class TaskService {
     public void delete(Long id, User user) {
         Task task = taskRepository.findByIdAndUser(id, user)
                 .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + id));
+        studyPlanItemRepository.nullifyTaskReference(task.getId());
         taskRepository.delete(task);
     }
 
-    // ── Automatic calculation helpers ───────────────────────────────────────
+    // ── Helper ─────────────────────────────────────────────────────────────
 
-    private double calculateAutomaticHours(Assessment assessment, Module module) {
-        if (assessment != null && assessment.getType() != null) {
-            return switch (assessment.getType()) {
-                case EXAM, PROJECT -> 3.0;
-                case ASSIGNMENT, REPORT -> 2.0;
-                case QUIZ, PRESENTATION -> 1.5;
-                case OTHER -> 2.0;
-            };
-        }
+    private double calculateAutomaticHours(Module module) {
         if (module != null && module.getCredits() >= 4) {
             return 2.5;
         }
         return 2.0; // standard 2-hour default study block
-    }
-
-    private TaskPriority calculateAutomaticPriority(Assessment assessment, Module module, LocalDateTime dueDateTime) {
-        LocalDateTime effectiveDeadline = dueDateTime;
-        if (effectiveDeadline == null && assessment != null) {
-            effectiveDeadline = assessment.getDueDateTime();
-        }
-
-        if (effectiveDeadline != null) {
-            long hoursUntil = java.time.temporal.ChronoUnit.HOURS.between(LocalDateTime.now(), effectiveDeadline);
-            if (hoursUntil <= 48) { // overdue or within 2 days
-                return TaskPriority.CRITICAL;
-            }
-            if (hoursUntil <= 24 * 6) { // 3–6 days
-                return TaskPriority.HIGH;
-            }
-            if (hoursUntil <= 24 * 14) { // 7–14 days
-                return TaskPriority.MEDIUM;
-            }
-            // > 14 days
-            if (assessment != null && (assessment.getType() == Assessment.AssessmentType.EXAM || assessment.getType() == Assessment.AssessmentType.PROJECT)) {
-                return TaskPriority.MEDIUM;
-            }
-            return TaskPriority.LOW;
-        }
-
-        // No deadline given — derive from academic importance
-        if (assessment != null && assessment.getType() != null) {
-            return switch (assessment.getType()) {
-                case EXAM, PROJECT -> TaskPriority.HIGH;
-                case ASSIGNMENT, REPORT, QUIZ, PRESENTATION -> TaskPriority.MEDIUM;
-                case OTHER -> TaskPriority.LOW;
-            };
-        }
-
-        if (module != null && module.getCredits() >= 4) {
-            return TaskPriority.MEDIUM;
-        }
-
-        return TaskPriority.MEDIUM;
     }
 }

@@ -7,6 +7,12 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 
+/**
+ * Response DTO for a single study plan session.
+ *
+ * <p>Includes {@code activityLabel} (e.g., "DSA Quiz Preparation") and
+ * {@code activityType} ("ASSESSMENT_PREP" or "TASK") for rich UI display.
+ */
 public record StudyPlanItemResponse(
         Long id,
         Long studyPlanId,
@@ -20,6 +26,8 @@ public record StudyPlanItemResponse(
         String assessmentTitle,
         Long taskId,
         String taskTitle,
+        String activityLabel,
+        String activityType,
         double plannedHours,
         double actualHours,
         String notes,
@@ -42,6 +50,8 @@ public record StudyPlanItemResponse(
                 item.getAssessment() != null ? item.getAssessment().getTitle() : null,
                 item.getTask() != null ? item.getTask().getId() : null,
                 item.getTask() != null ? item.getTask().getTitle() : null,
+                item.getActivityLabel(),
+                item.getActivityType(),
                 item.getPlannedHours(),
                 item.getActualHours(),
                 item.getNotes(),

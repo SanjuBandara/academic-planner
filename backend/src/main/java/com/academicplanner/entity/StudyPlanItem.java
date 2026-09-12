@@ -11,9 +11,11 @@ import java.time.LocalTime;
  * A single scheduled study/work session within a {@link StudyPlan}.
  *
  * <p>Links to a module and optionally to an assessment and/or task.
- * The {@code actualHours} field is updated by the student when logging work.
- * Historical (COMPLETED/SKIPPED) items must never be modified by the replanning
- * algorithm — only PLANNED future items can be updated.
+ * The {@code activityLabel} provides a human-readable name shown in the plan,
+ * e.g. "DSA Quiz Preparation" or "Complete DSA Practice Problems".
+ *
+ * <p>Historical (COMPLETED/SKIPPED) items must never be modified by the
+ * replanning algorithm — only PLANNED future items can be updated.
  */
 @Entity
 @Table(name = "study_plan_items")
@@ -53,6 +55,24 @@ public class StudyPlanItem {
     @JoinColumn(name = "task_id")
     private Task task;
 
+    /**
+     * Human-readable activity name displayed in the academic plan.
+     * Examples:
+     * <ul>
+     *   <li>"DSA Quiz Preparation" (for assessment-based item)</li>
+     *   <li>"Complete DSA Practice Problems" (for task-based item)</li>
+     * </ul>
+     */
+    @Column(name = "activity_label")
+    private String activityLabel;
+
+    /**
+     * Type of the planning item: ASSESSMENT_PREP or TASK.
+     * Used by the frontend to display the correct badge/icon.
+     */
+    @Column(name = "activity_type", length = 30)
+    private String activityType;
+
     @Column(name = "planned_hours", nullable = false)
     private double plannedHours;
 
@@ -69,8 +89,8 @@ public class StudyPlanItem {
     private ItemStatus status = ItemStatus.PLANNED;
 
     /**
-     * Numeric priority score assigned by the planning engine.
-     * Higher = more urgent. Stored for display sorting.
+     * Planning weight score stored for display/sorting.
+     * Higher = more important (more time was allocated).
      */
     @Column(name = "priority_score")
     private Double priorityScore;

@@ -6,9 +6,12 @@ import com.academicplanner.entity.StudyPlan;
 import com.academicplanner.entity.StudyPlanItem;
 import com.academicplanner.entity.StudyPlanItem.ItemStatus;
 import com.academicplanner.entity.Task;
-import com.academicplanner.planning.model.PlanningCandidate;
+import com.academicplanner.planning.model.DailyAvailability;
+import com.academicplanner.planning.model.PlanningItem;
+import com.academicplanner.planning.model.TimeSlot;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -16,30 +19,23 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 /**
- * Converts a list of {@link PlanningCandidate}s with allocated hours into
- * concrete, time-blocked {@link StudyPlanItem}s.
+ * Converts a list of {@link PlanningItem}s with allocated hours into
+ * concrete {@link StudyPlanItem}s.
  *
- * <h2>Scheduling rules</h2>
+ * <p>Supports two availability modes:
  * <ul>
- *   <li>Sessions start at {@link #DEFAULT_START} (09:00).</li>
- *   <li>Maximum single session = {@link #MAX_SESSION_HOURS} (3 h).</li>
- *   <li>After a session ≥ {@link #BREAK_THRESHOLD_HOURS} (2 h): 30-minute break.</li>
- *   <li>After a session {@literal <} 2 h: 15-minute gap.</li>
- *   <li>All session lengths are rounded to 15-minute increments.</li>
- *   <li>A session is never created if its duration would be &lt; 15 minutes.</li>
- *   <li>A session must not start on or after the effective deadline.</li>
- *   <li>A session must not end after the effective deadline.</li>
+ *   <li><b>Mode A (Hours Only):</b> No exact time slots provided. Sessions are scheduled
+ *       with day-level duration; {@code startTime} and {@code endTime} remain {@code null}
+ *       so the table display has clean, blank Time cells without invented times.</li>
+ *   <li><b>Mode B (Hours + Time Slots):</b> Explicit time slots provided. Sessions are scheduled
+ *       strictly within the declared windows, populating exact {@code startTime} and {@code endTime}.
+ *       Breaks/gaps never extend past slot boundaries.</li>
  * </ul>
- *
- * <h2>Scheduling order</h2>
- * Each day iterates candidates in <em>scheduling priority</em> order:
- * feasibility risk DESC → effective deadline ASC → priority score DESC.
- * This ensures deadline-constrained items get the day's first slots.
  */
 @Component
 public class SessionScheduler {
 
-    /** Default session start time for each day. */
+    /** Default session start time when needed. */
     public static final LocalTime DEFAULT_START         = LocalTime.of(9, 0);
     /** Maximum hours in a single study session. */
     public static final double    MAX_SESSION_HOURS     = 3.0;
@@ -53,73 +49,173 @@ public class SessionScheduler {
     public static final int       GAP_MINUTES           = 15;
 
     /**
-     * Generates study-plan items for all candidates across all days.
-     *
-     * @param studyPlan  parent plan entity (already saved)
-     * @param candidates candidates with {@code allocatedHours} set
-     * @param dailyHours daily availability map
-     * @return ordered list of items, ready to persist
+     * Scheduling method using daily hours map (Mode A).
      */
     public List<StudyPlanItem> schedule(StudyPlan studyPlan,
-                                        List<PlanningCandidate> candidates,
+                                        List<PlanningItem> items,
                                         Map<LocalDate, Double> dailyHours) {
+        Map<LocalDate, DailyAvailability> dailyAvail = new LinkedHashMap<>();
+        for (Map.Entry<LocalDate, Double> entry : dailyHours.entrySet()) {
+            dailyAvail.put(entry.getKey(), DailyAvailability.ofHoursOnly(entry.getKey(), entry.getValue()));
+        }
+        return scheduleWithAvailability(studyPlan, items, dailyAvail);
+    }
 
-        List<StudyPlanItem> items = new ArrayList<>();
+    /**
+     * Primary scheduling method accepting full {@link DailyAvailability} per day.
+     */
+    public List<StudyPlanItem> scheduleWithAvailability(StudyPlan studyPlan,
+                                                        List<PlanningItem> planningItems,
+                                                        Map<LocalDate, DailyAvailability> dailyAvailabilityMap) {
+        List<StudyPlanItem> scheduledItems = new ArrayList<>();
 
         // Sort days chronologically
-        List<LocalDate> days = dailyHours.keySet().stream().sorted().toList();
+        List<LocalDate> days = dailyAvailabilityMap.keySet().stream().sorted().toList();
 
-        // Sort candidates by scheduling priority (immutable list → new list)
-        List<PlanningCandidate> agenda = new ArrayList<>(candidates);
+        // Sort items by scheduling priority (urgent / at-risk first, then deadline, then weight)
+        List<PlanningItem> agenda = new ArrayList<>(planningItems);
         agenda.sort(schedulingComparator());
 
-        // Mutable remaining allocations per candidate
+        // Mutable remaining allocations per item
         Map<String, Double> remainingAllocation = new LinkedHashMap<>();
-        for (PlanningCandidate c : agenda) {
-            remainingAllocation.put(c.candidateKey(), c.getAllocatedHours());
+        for (PlanningItem item : agenda) {
+            remainingAllocation.put(item.itemKey(), item.getAllocatedHours());
         }
 
         for (LocalDate day : days) {
-            double dayCapacity = dailyHours.getOrDefault(day, 0.0);
+            DailyAvailability dayAvail = dailyAvailabilityMap.get(day);
+            if (dayAvail == null) continue;
+
+            double dayCapacity = dayAvail.effectiveSchedulableHours();
             if (dayCapacity <= 0) continue;
 
-            double    dayRemaining = dayCapacity;
-            LocalTime cursor       = DEFAULT_START;
+            if (dayAvail.hasTimeSlots()) {
+                // Mode B: Hours + Time Slots
+                scheduleDayWithTimeSlots(studyPlan, day, dayAvail, agenda, remainingAllocation, scheduledItems);
+            } else {
+                // Mode A: Hours Only (No time slots -> startTime and endTime remain null)
+                scheduleDayHoursOnly(studyPlan, day, dayCapacity, agenda, remainingAllocation, scheduledItems);
+            }
+        }
 
-            boolean scheduledAny = true;
-            while (dayRemaining >= MIN_SESSION_HOURS && scheduledAny) {
-                scheduledAny = false;
+        return scheduledItems;
+    }
 
-                for (PlanningCandidate candidate : agenda) {
+    /**
+     * Mode A: Day-level duration allocation without exact time windows.
+     * Table columns startTime and endTime remain null (blank in UI, no fake times).
+     */
+    private void scheduleDayHoursOnly(StudyPlan studyPlan,
+                                      LocalDate day,
+                                      double dayCapacity,
+                                      List<PlanningItem> agenda,
+                                      Map<String, Double> remainingAllocation,
+                                      List<StudyPlanItem> items) {
+        double dayRemaining = dayCapacity;
+        boolean scheduledAny = true;
+
+        while (dayRemaining >= MIN_SESSION_HOURS && scheduledAny) {
+            scheduledAny = false;
+
+            for (PlanningItem item : agenda) {
+                if (dayRemaining < MIN_SESSION_HOURS) break;
+
+                String key = item.itemKey();
+                double stillNeed = remainingAllocation.getOrDefault(key, 0.0);
+                if (stillNeed < MIN_SESSION_HOURS) continue;
+
+                // Deadline check: do not schedule on a day after deadline
+                LocalDateTime deadline = item.getDeadline();
+                if (deadline != null && day.isAfter(deadline.toLocalDate())) {
+                    continue;
+                }
+
+                double maxForSession = Math.min(stillNeed, Math.min(dayRemaining, MAX_SESSION_HOURS));
+                double sessionHours = Math.round(maxForSession * 4.0) / 4.0;
+                if (sessionHours > maxForSession + 0.001) {
+                    sessionHours = Math.floor(maxForSession * 4.0) / 4.0;
+                }
+                if (sessionHours < MIN_SESSION_HOURS) continue;
+
+                Assessment assessment = item.getAssessment();
+                Task task = item.getTask();
+                Module module = resolveModule(assessment, task);
+
+                StudyPlanItem planItem = StudyPlanItem.builder()
+                        .studyPlan(studyPlan)
+                        .date(day)
+                        .startTime(null)
+                        .endTime(null)
+                        .module(module)
+                        .assessment(assessment)
+                        .task(task)
+                        .activityLabel(item.getActivityLabel())
+                        .activityType(item.getActivityType())
+                        .plannedHours(sessionHours)
+                        .priorityScore(item.getWeight())
+                        .status(ItemStatus.PLANNED)
+                        .build();
+
+                items.add(planItem);
+                scheduledAny = true;
+
+                dayRemaining -= sessionHours;
+                remainingAllocation.merge(key, -sessionHours, Double::sum);
+            }
+        }
+    }
+
+    /**
+     * Mode B: Schedules sessions strictly within declared time slots.
+     * Populates exact startTime and endTime. Breaks and gaps stay within slots.
+     */
+    private void scheduleDayWithTimeSlots(StudyPlan studyPlan,
+                                          LocalDate day,
+                                          DailyAvailability dayAvail,
+                                          List<PlanningItem> agenda,
+                                          Map<String, Double> remainingAllocation,
+                                          List<StudyPlanItem> items) {
+        double dayRemaining = dayAvail.effectiveSchedulableHours();
+        List<TimeSlot> sortedSlots = new ArrayList<>(dayAvail.timeSlots());
+        sortedSlots.sort(Comparator.comparing(TimeSlot::startTime));
+
+        for (TimeSlot slot : sortedSlots) {
+            if (dayRemaining < MIN_SESSION_HOURS) break;
+
+            LocalTime cursor = slot.startTime();
+            LocalTime slotEnd = slot.endTime();
+
+            boolean scheduledInSlot = true;
+            while (dayRemaining >= MIN_SESSION_HOURS && scheduledInSlot && cursor.isBefore(slotEnd)) {
+                scheduledInSlot = false;
+
+                long minutesLeftInSlot = Duration.between(cursor, slotEnd).toMinutes();
+                double slotHoursLeft = minutesLeftInSlot / 60.0;
+                if (slotHoursLeft < MIN_SESSION_HOURS) break;
+
+                for (PlanningItem item : agenda) {
                     if (dayRemaining < MIN_SESSION_HOURS) break;
 
-                    String key       = candidate.candidateKey();
+                    String key = item.itemKey();
                     double stillNeed = remainingAllocation.getOrDefault(key, 0.0);
                     if (stillNeed < MIN_SESSION_HOURS) continue;
 
-                    // ── Deadline boundary checks ───────────────────────────────
-                    LocalDateTime deadline = candidate.getEffectiveDeadline();
+                    LocalDateTime deadline = item.getDeadline();
                     if (deadline != null) {
-                        // Do not start a session on a day after the deadline
                         if (day.isAfter(deadline.toLocalDate())) continue;
-
-                        // On the deadline day, cursor must be before deadline time
                         if (day.isEqual(deadline.toLocalDate())) {
                             if (!cursor.isBefore(deadline.toLocalTime())) continue;
                         }
                     }
 
-                    // ── Compute maximum session hours ──────────────────────────
-                    double maxForSession = Math.min(stillNeed, Math.min(dayRemaining, MAX_SESSION_HOURS));
+                    double maxForSession = Math.min(stillNeed, Math.min(dayRemaining, Math.min(slotHoursLeft, MAX_SESSION_HOURS)));
 
-                    // Trim to deadline time boundary on the deadline day
                     if (deadline != null && day.isEqual(deadline.toLocalDate())) {
                         double minutesUntilDeadline = (double) cursor.until(deadline.toLocalTime(), ChronoUnit.MINUTES);
-                        double hoursUntilDeadline   = minutesUntilDeadline / 60.0;
+                        double hoursUntilDeadline = minutesUntilDeadline / 60.0;
                         maxForSession = Math.min(maxForSession, hoursUntilDeadline);
                     }
 
-                    // Round to 15-minute slot
                     double sessionHours = Math.round(maxForSession * 4.0) / 4.0;
                     if (sessionHours > maxForSession + 0.001) {
                         sessionHours = Math.floor(maxForSession * 4.0) / 4.0;
@@ -127,19 +223,18 @@ public class SessionScheduler {
                     if (sessionHours < MIN_SESSION_HOURS) continue;
 
                     LocalTime start = cursor;
-                    LocalTime end   = cursor.plusMinutes(Math.round(sessionHours * 60));
+                    LocalTime end = cursor.plusMinutes(Math.round(sessionHours * 60));
 
-                    // Final safety check: end must not exceed deadline time
+                    if (end.isAfter(slotEnd)) continue;
                     if (deadline != null && day.isEqual(deadline.toLocalDate())) {
                         if (end.isAfter(deadline.toLocalTime())) continue;
                     }
 
-                    // ── Build item ─────────────────────────────────────────────
-                    Assessment assessment = candidate.getAssessment();
-                    Task       task       = candidate.getTask();
-                    Module     module     = resolveModule(assessment, task);
+                    Assessment assessment = item.getAssessment();
+                    Task task = item.getTask();
+                    Module module = resolveModule(assessment, task);
 
-                    StudyPlanItem item = StudyPlanItem.builder()
+                    StudyPlanItem planItem = StudyPlanItem.builder()
                             .studyPlan(studyPlan)
                             .date(day)
                             .startTime(start)
@@ -147,29 +242,27 @@ public class SessionScheduler {
                             .module(module)
                             .assessment(assessment)
                             .task(task)
+                            .activityLabel(item.getActivityLabel())
+                            .activityType(item.getActivityType())
                             .plannedHours(sessionHours)
-                            .priorityScore(candidate.getPriorityScore())
+                            .priorityScore(item.getWeight())
                             .status(ItemStatus.PLANNED)
                             .build();
 
-                    items.add(item);
-                    scheduledAny = true;
+                    items.add(planItem);
+                    scheduledInSlot = true;
 
-                    // ── Advance cursor and deduct ──────────────────────────────
+                    // Advance cursor with break or gap
                     cursor = end;
-                    if (sessionHours >= BREAK_THRESHOLD_HOURS) {
-                        cursor = cursor.plusMinutes(BREAK_MINUTES);
-                    } else {
-                        cursor = cursor.plusMinutes(GAP_MINUTES);
-                    }
+                    int breakOrGap = (sessionHours >= BREAK_THRESHOLD_HOURS) ? BREAK_MINUTES : GAP_MINUTES;
+                    cursor = cursor.plusMinutes(breakOrGap);
 
                     dayRemaining -= sessionHours;
                     remainingAllocation.merge(key, -sessionHours, Double::sum);
+                    break;
                 }
             }
         }
-
-        return items;
     }
 
     // ── Private helpers ────────────────────────────────────────────────────
@@ -182,18 +275,18 @@ public class SessionScheduler {
 
     /**
      * Scheduling-priority comparator:
-     * IMPOSSIBLE / AT_RISK first → earliest deadline → highest score.
+     * IMPOSSIBLE / AT_RISK first → earliest deadline → highest weight.
      */
-    private Comparator<PlanningCandidate> schedulingComparator() {
+    private Comparator<PlanningItem> schedulingComparator() {
         return Comparator
-                .comparingInt((PlanningCandidate c) -> feasibilityOrder(c.getFeasibilityStatus()))
-                .thenComparing(c -> c.getEffectiveDeadline() == null
+                .comparingInt((PlanningItem c) -> feasibilityOrder(c.getFeasibilityStatus()))
+                .thenComparing(c -> c.getDeadline() == null
                         ? LocalDateTime.MAX
-                        : c.getEffectiveDeadline())
-                .thenComparingDouble(c -> -c.getPriorityScore());
+                        : c.getDeadline())
+                .thenComparingDouble(c -> -c.getWeight());
     }
 
-    private int feasibilityOrder(PlanningCandidate.FeasibilityStatus status) {
+    private int feasibilityOrder(PlanningItem.FeasibilityStatus status) {
         return switch (status) {
             case IMPOSSIBLE_WITH_CURRENT_AVAILABILITY -> 0;
             case AT_RISK                              -> 1;

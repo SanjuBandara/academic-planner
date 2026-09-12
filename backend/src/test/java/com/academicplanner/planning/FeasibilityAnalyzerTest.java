@@ -1,120 +1,118 @@
 package com.academicplanner.planning;
 
 import com.academicplanner.entity.Task;
-import com.academicplanner.planning.model.PlanningCandidate;
-import com.academicplanner.planning.model.PlanningCandidate.FeasibilityStatus;
+import com.academicplanner.planning.model.PlanningItem;
+import com.academicplanner.planning.model.PlanningItem.FeasibilityStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@DisplayName("FeasibilityAnalyzer")
 class FeasibilityAnalyzerTest {
 
     private FeasibilityAnalyzer analyzer;
+    private LocalDateTime now;
+    private Map<LocalDate, Double> dailyHours;
 
     @BeforeEach
     void setUp() {
-        analyzer = new FeasibilityAnalyzer();
+        DeadlineUrgencyCalculator urgencyCalculator = new DeadlineUrgencyCalculator();
+        analyzer = new FeasibilityAnalyzer(urgencyCalculator);
+        now = LocalDateTime.of(2026, 9, 10, 8, 0);
+
+        dailyHours = new LinkedHashMap<>();
+        dailyHours.put(LocalDate.of(2026, 9, 10), 4.0);
+        dailyHours.put(LocalDate.of(2026, 9, 11), 6.0); // 10h total across 2 days
     }
 
     @Test
-    @DisplayName("Remaining hours <= available capacity -> FEASIBLE")
+    @DisplayName("Work needed <= available capacity -> FEASIBLE")
     void testFeasibleStatus() {
-        PlanningCandidate c = PlanningCandidate.forStandaloneTask(
-                Task.builder().id(1L).title("Assignment").build(),
-                LocalDateTime.of(2026, 9, 15, 17, 0));
-        c.setRemainingWorkHours(6.0);
-        c.setAvailableHoursBeforeDeadline(10.0);
+        Task task = Task.builder().id(1L).title("Assignment").remainingHours(6.0).build();
+        LocalDateTime deadline = LocalDateTime.of(2026, 9, 11, 23, 59);
 
-        analyzer.classify(c);
+        PlanningItem item = PlanningItem.forTask(task);
+        // Needed: 6.0h, Available: 10.0h
+        analyzer.classify(item, dailyHours, now);
 
-        assertThat(c.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.FEASIBLE);
-        assertThat(c.getFeasibilityWarning()).isNull();
+        assertThat(item.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.FEASIBLE);
+        assertThat(item.getFeasibilityWarning()).isNull();
     }
 
     @Test
-    @DisplayName("Remaining hours slightly above available (<= 1.2x) -> AT_RISK")
+    @DisplayName("Work needed slightly above available (<= 1.2x) -> AT_RISK")
     void testAtRiskStatus() {
-        PlanningCandidate c = PlanningCandidate.forStandaloneTask(
-                Task.builder().id(2L).title("Math Quiz").build(),
-                LocalDateTime.of(2026, 9, 15, 17, 0));
-        c.setRemainingWorkHours(11.0);
-        c.setAvailableHoursBeforeDeadline(10.0); // 11 <= 10 * 1.2 (12.0)
+        LocalDateTime deadline = LocalDateTime.of(2026, 9, 11, 23, 59);
+        Task task = Task.builder().id(2L).title("Math Quiz").remainingHours(11.0).dueDateTime(deadline).build();
 
-        analyzer.classify(c);
+        PlanningItem item = PlanningItem.forTask(task);
+        // Needed: 11.0h, Available: 10.0h (11.0 <= 10.0 * 1.2 = 12.0)
+        analyzer.classify(item, dailyHours, now);
 
-        assertThat(c.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.AT_RISK);
-        assertThat(c.getFeasibilityWarning()).isNotNull();
-        assertThat(c.getFeasibilityWarning()).contains("AT RISK");
+        assertThat(item.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.AT_RISK);
+        assertThat(item.getFeasibilityWarning()).isNotNull();
+        assertThat(item.getFeasibilityWarning()).contains("AT RISK");
     }
 
     @Test
-    @DisplayName("Remaining hours significantly exceed available (> 1.2x) -> IMPOSSIBLE")
+    @DisplayName("Work needed significantly exceeds available (> 1.2x) -> IMPOSSIBLE")
     void testImpossibleStatus() {
-        PlanningCandidate c = PlanningCandidate.forStandaloneTask(
-                Task.builder().id(3L).title("Large Project").build(),
-                LocalDateTime.of(2026, 9, 15, 17, 0));
-        c.setRemainingWorkHours(15.0);
-        c.setAvailableHoursBeforeDeadline(6.0); // 15 > 6 * 1.2 (7.2)
+        LocalDateTime deadline = LocalDateTime.of(2026, 9, 11, 23, 59);
+        Task task = Task.builder().id(3L).title("Large Project").remainingHours(15.0).dueDateTime(deadline).build();
 
-        analyzer.classify(c);
+        PlanningItem item = PlanningItem.forTask(task);
+        // Needed: 15.0h, Available: 10.0h (15.0 > 12.0)
+        analyzer.classify(item, dailyHours, now);
 
-        assertThat(c.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.IMPOSSIBLE_WITH_CURRENT_AVAILABILITY);
-        assertThat(c.getFeasibilityWarning()).isNotNull();
-        assertThat(c.getFeasibilityWarning()).contains("CANNOT be completed");
+        assertThat(item.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.IMPOSSIBLE_WITH_CURRENT_AVAILABILITY);
+        assertThat(item.getFeasibilityWarning()).isNotNull();
+        assertThat(item.getFeasibilityWarning()).contains("CANNOT be completed");
     }
 
     @Test
     @DisplayName("No deadline is always FEASIBLE")
     void testNoDeadlineAlwaysFeasible() {
-        PlanningCandidate c = PlanningCandidate.forStandaloneTask(
-                Task.builder().id(4L).title("Long-term reading").build(),
-                null);
-        c.setRemainingWorkHours(25.0);
-        c.setAvailableHoursBeforeDeadline(5.0);
+        Task task = Task.builder().id(4L).title("Long-term reading").remainingHours(25.0).build();
+        PlanningItem item = PlanningItem.forTask(task);
 
-        analyzer.classify(c);
+        analyzer.classify(item, dailyHours, now);
 
-        assertThat(c.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.FEASIBLE);
-        assertThat(c.getFeasibilityWarning()).isNull();
+        assertThat(item.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.FEASIBLE);
+        assertThat(item.getFeasibilityWarning()).isNull();
     }
 
     @Test
-    @DisplayName("Zero remaining work is always FEASIBLE")
-    void testZeroRemainingWorkFeasible() {
-        PlanningCandidate c = PlanningCandidate.forStandaloneTask(
-                Task.builder().id(5L).title("Finished task").build(),
-                LocalDateTime.of(2026, 9, 10, 12, 0));
-        c.setRemainingWorkHours(0.0);
-        c.setAvailableHoursBeforeDeadline(0.0);
+    @DisplayName("Zero work needed is always FEASIBLE")
+    void testZeroWorkNeededFeasible() {
+        Task task = Task.builder().id(5L).title("Finished task").remainingHours(0.0).build();
+        PlanningItem item = PlanningItem.forTask(task);
 
-        analyzer.classify(c);
+        analyzer.classify(item, dailyHours, now);
 
-        assertThat(c.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.FEASIBLE);
-        assertThat(c.getFeasibilityWarning()).isNull();
+        assertThat(item.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.FEASIBLE);
+        assertThat(item.getFeasibilityWarning()).isNull();
     }
 
     @Test
-    @DisplayName("analyzeAll classifies all candidates in batch")
+    @DisplayName("analyzeAll classifies all items in batch")
     void testAnalyzeAll() {
-        PlanningCandidate c1 = PlanningCandidate.forStandaloneTask(
-                Task.builder().id(1L).title("T1").build(), LocalDateTime.now().plusDays(2));
-        c1.setRemainingWorkHours(2.0);
-        c1.setAvailableHoursBeforeDeadline(5.0);
+        Task t1 = Task.builder().id(1L).title("T1").remainingHours(2.0).dueDateTime(LocalDateTime.of(2026, 9, 11, 23, 59)).build();
+        Task t2 = Task.builder().id(2L).title("T2").remainingHours(20.0).dueDateTime(LocalDateTime.of(2026, 9, 11, 23, 59)).build();
 
-        PlanningCandidate c2 = PlanningCandidate.forStandaloneTask(
-                Task.builder().id(2L).title("T2").build(), LocalDateTime.now().plusDays(2));
-        c2.setRemainingWorkHours(10.0);
-        c2.setAvailableHoursBeforeDeadline(3.0);
+        PlanningItem item1 = PlanningItem.forTask(t1);
+        PlanningItem item2 = PlanningItem.forTask(t2);
 
-        List<PlanningCandidate> list = List.of(c1, c2);
-        analyzer.analyzeAll(list);
+        analyzer.analyzeAll(List.of(item1, item2), dailyHours, now);
 
-        assertThat(c1.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.FEASIBLE);
-        assertThat(c2.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.IMPOSSIBLE_WITH_CURRENT_AVAILABILITY);
+        assertThat(item1.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.FEASIBLE);
+        assertThat(item2.getFeasibilityStatus()).isEqualTo(FeasibilityStatus.IMPOSSIBLE_WITH_CURRENT_AVAILABILITY);
     }
 }

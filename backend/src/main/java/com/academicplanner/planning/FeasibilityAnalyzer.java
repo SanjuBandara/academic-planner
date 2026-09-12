@@ -1,97 +1,97 @@
 package com.academicplanner.planning;
 
-import com.academicplanner.planning.model.PlanningCandidate;
-import com.academicplanner.planning.model.PlanningCandidate.FeasibilityStatus;
+import com.academicplanner.planning.model.PlanningItem;
+import com.academicplanner.planning.model.PlanningItem.FeasibilityStatus;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
- * Classifies each {@link PlanningCandidate} by feasibility:
- * can the remaining work realistically be completed before the deadline?
+ * Classifies each {@link PlanningItem} by feasibility:
+ * can the allocated/required work realistically be completed before the deadline?
  *
  * <h2>Classification thresholds</h2>
  * <pre>
- *   remaining ≤ available                     → FEASIBLE
- *   remaining ≤ available × AT_RISK_THRESHOLD  → AT_RISK
- *   remaining > available × AT_RISK_THRESHOLD  → IMPOSSIBLE_WITH_CURRENT_AVAILABILITY
+ *   workNeeded ≤ available                     → FEASIBLE
+ *   workNeeded ≤ available × AT_RISK_THRESHOLD  → AT_RISK
+ *   workNeeded > available × AT_RISK_THRESHOLD  → IMPOSSIBLE_WITH_CURRENT_AVAILABILITY
  * </pre>
  *
- * <p>When no deadline exists, the candidate is always {@code FEASIBLE}.
- *
- * <p>This class is stateless and deterministic.
+ * <p>When no deadline exists, the item is always {@code FEASIBLE}.
  */
 @Component
 public class FeasibilityAnalyzer {
 
     /**
-     * Upper bound ratio: if remaining ≤ available × this factor, the candidate
-     * is AT_RISK (tight, but technically possible with perfect execution).
-     * A factor of 1.2 means remaining can be up to 20 % over available.
+     * Upper bound ratio: if needed ≤ available × this factor, the item
+     * is AT_RISK (tight, but possible with optimal schedule).
      */
     public static final double AT_RISK_THRESHOLD = 1.2;
 
+    private final DeadlineUrgencyCalculator urgencyCalculator;
+
+    public FeasibilityAnalyzer(DeadlineUrgencyCalculator urgencyCalculator) {
+        this.urgencyCalculator = urgencyCalculator;
+    }
+
     /**
-     * Classifies feasibility and sets the warning message for every candidate
-     * in the list.
-     *
-     * @param candidates candidates already populated with remainingWorkHours
-     *                   and availableHoursBeforeDeadline
+     * Analyzes feasibility for all planning items and sets status & warning in-place.
      */
-    public void analyzeAll(List<PlanningCandidate> candidates) {
-        for (PlanningCandidate c : candidates) {
-            classify(c);
+    public void analyzeAll(List<PlanningItem> items, Map<LocalDate, Double> dailyHours, LocalDateTime now) {
+        for (PlanningItem item : items) {
+            classify(item, dailyHours, now);
         }
     }
 
     /**
-     * Classifies a single candidate and sets {@code feasibilityStatus} and
-     * {@code feasibilityWarning} on it.
+     * Classifies a single item.
      */
-    public void classify(PlanningCandidate candidate) {
-        double remaining  = candidate.getRemainingWorkHours();
-        double available  = candidate.getAvailableHoursBeforeDeadline();
-        String label      = label(candidate);
-
-        if (candidate.getEffectiveDeadline() == null) {
-            // No deadline — always feasible, no warning needed
-            candidate.setFeasibilityStatus(FeasibilityStatus.FEASIBLE);
-            candidate.setFeasibilityWarning(null);
+    public void classify(PlanningItem item, Map<LocalDate, Double> dailyHours, LocalDateTime now) {
+        if (item.getDeadline() == null) {
+            item.setFeasibilityStatus(FeasibilityStatus.FEASIBLE);
+            item.setFeasibilityWarning(null);
             return;
         }
 
-        if (remaining <= 0) {
-            candidate.setFeasibilityStatus(FeasibilityStatus.FEASIBLE);
-            candidate.setFeasibilityWarning(null);
+        double available = urgencyCalculator.availableHoursBeforeDeadline(item.getDeadline(), dailyHours, now);
+        double needed = getWorkNeeded(item);
+
+        if (needed <= 0) {
+            item.setFeasibilityStatus(FeasibilityStatus.FEASIBLE);
+            item.setFeasibilityWarning(null);
             return;
         }
 
-        if (remaining <= available) {
-            candidate.setFeasibilityStatus(FeasibilityStatus.FEASIBLE);
-            candidate.setFeasibilityWarning(null);
-        } else if (remaining <= available * AT_RISK_THRESHOLD) {
-            candidate.setFeasibilityStatus(FeasibilityStatus.AT_RISK);
-            candidate.setFeasibilityWarning(String.format(
-                    "%s is AT RISK: %.1fh remain but only %.1fh are available before its deadline.",
-                    label, remaining, available));
+        String label = item.getActivityLabel() != null ? "\"" + item.getActivityLabel() + "\"" : "Activity";
+
+        if (needed <= available) {
+            item.setFeasibilityStatus(FeasibilityStatus.FEASIBLE);
+            item.setFeasibilityWarning(null);
+        } else if (needed <= available * AT_RISK_THRESHOLD) {
+            item.setFeasibilityStatus(FeasibilityStatus.AT_RISK);
+            item.setFeasibilityWarning(String.format(
+                    "%s is AT RISK: %.1fh needed/allocated but only %.1fh are available before its deadline.",
+                    label, needed, available));
         } else {
-            candidate.setFeasibilityStatus(FeasibilityStatus.IMPOSSIBLE_WITH_CURRENT_AVAILABILITY);
-            candidate.setFeasibilityWarning(String.format(
-                    "%s CANNOT be completed before the deadline with current availability "
-                            + "(%.1fh remain, only %.1fh available).",
-                    label, remaining, available));
+            item.setFeasibilityStatus(FeasibilityStatus.IMPOSSIBLE_WITH_CURRENT_AVAILABILITY);
+            item.setFeasibilityWarning(String.format(
+                    "%s CANNOT be completed before the deadline with current availability (%.1fh needed/allocated, only %.1fh available).",
+                    label, needed, available));
         }
     }
 
-    // ── Private helpers ────────────────────────────────────────────────────
-
-    private String label(PlanningCandidate c) {
-        if (c.getTask() != null) {
-            return "\"" + c.getTask().getTitle() + "\"";
+    private double getWorkNeeded(PlanningItem item) {
+        if (item.getTask() != null) {
+            if (item.getTask().getRemainingHours() != null && item.getTask().getRemainingHours() > 0) {
+                return item.getTask().getRemainingHours();
+            }
+            if (item.getTask().getEstimatedHours() != null && item.getTask().getEstimatedHours() > 0) {
+                return item.getTask().getEstimatedHours();
+            }
         }
-        if (c.getAssessment() != null) {
-            return "\"" + c.getAssessment().getTitle() + "\"";
-        }
-        return "Candidate[" + c.candidateKey() + "]";
+        return item.getAllocatedHours();
     }
 }

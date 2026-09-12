@@ -17,8 +17,6 @@ public interface TaskRepository extends JpaRepository<Task, Long> {
 
     List<Task> findAllByUserAndModule_Id(User user, Long moduleId);
 
-    List<Task> findAllByUserAndAssessment_Id(User user, Long assessmentId);
-
     /** Tasks with remaining work that are not completed or cancelled — for planning. */
     @Query("""
             SELECT t FROM Task t

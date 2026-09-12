@@ -37,8 +37,8 @@ export interface ModuleRequest {
   description?: string;
 }
 
-export type AssessmentType = 'ASSIGNMENT' | 'EXAM' | 'QUIZ' | 'PROJECT';
-export type PriorityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+export type AssessmentType = 'ASSIGNMENT' | 'EXAM' | 'QUIZ' | 'PROJECT' | 'PRESENTATION' | 'REPORT' | 'OTHER';
+export type PriorityLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 export type AssessmentStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 
 export interface Assessment {
@@ -50,7 +50,7 @@ export interface Assessment {
   description?: string;
   dueDateTime: string;
   weight: number;
-  priority: PriorityLevel;
+  calculatedBasePriority?: number;
   status: AssessmentStatus;
   daysUntilDeadline?: number;
 }
@@ -61,7 +61,6 @@ export interface AssessmentRequest {
   description?: string;
   dueDateTime: string;
   weight: number;
-  priority?: PriorityLevel;
   status?: AssessmentStatus;
 }
 
@@ -70,14 +69,14 @@ export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 export interface Task {
   id: number;
   moduleId?: number;
+  moduleCode?: string;
   moduleName?: string;
-  assessmentId?: number;
-  assessmentTitle?: string;
   title: string;
   description?: string;
   estimatedHours: number;
   remainingHours: number;
   priority: PriorityLevel;
+  priorityValue?: number;
   status: TaskStatus;
   dueDateTime?: string;
   completedAt?: string;
@@ -89,9 +88,8 @@ export interface TaskRequest {
   title: string;
   description?: string;
   moduleId?: number;
-  assessmentId?: number;
   estimatedHours?: number;
-  priority?: PriorityLevel;
+  priority: PriorityLevel;
   status?: TaskStatus;
   dueDateTime?: string;
 }
@@ -124,10 +122,13 @@ export interface StudyPlanItem {
   assessmentTitle?: string;
   taskId?: number;
   taskTitle?: string;
+  activityLabel?: string;
+  activityType?: string;
   plannedHours: number;
   actualHours?: number;
   status: ItemStatus;
   priorityScore?: number;
+  notes?: string;
 }
 
 export interface StudyPlan {

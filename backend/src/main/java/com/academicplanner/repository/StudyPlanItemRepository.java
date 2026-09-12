@@ -40,4 +40,12 @@ public interface StudyPlanItemRepository extends JpaRepository<StudyPlanItem, Lo
                                                @Param("fromDate") LocalDate fromDate);
 
     boolean existsByIdAndStudyPlan_User_Id(Long id, Long userId);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE StudyPlanItem spi SET spi.task = null WHERE spi.task.id = :taskId")
+    void nullifyTaskReference(@Param("taskId") Long taskId);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("UPDATE StudyPlanItem spi SET spi.assessment = null WHERE spi.assessment.id = :assessmentId")
+    void nullifyAssessmentReference(@Param("assessmentId") Long assessmentId);
 }

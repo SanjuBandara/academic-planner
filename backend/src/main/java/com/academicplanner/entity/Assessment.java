@@ -7,8 +7,13 @@ import java.time.LocalDateTime;
 
 /**
  * Represents an academic assessment (assignment, exam, quiz, etc.) for a module.
- * The planning engine uses dueDateTime, estimatedHours, priority, and status
- * to calculate urgency scores when generating study plans.
+ *
+ * <p>Assessment priority is NOT user-selectable. It is calculated automatically
+ * by the planning engine using:
+ * <pre>
+ *   basePriority (by type) + deadlineUrgencyBonus
+ * </pre>
+ * The {@link #weight} field is the grade percentage (0–100), not the planning weight.
  */
 @Entity
 @Table(name = "assessments")
@@ -42,21 +47,12 @@ public class Assessment {
     private LocalDateTime dueDateTime;
 
     /**
-     * Total estimated work hours required.
-     * The planning engine uses task.remainingHours (not this field directly)
-     * when tasks exist, but falls back to this for untracked assessments.
+     * Grade weight of this assessment in the overall module grade (0–100).
+     * This is for grade tracking purposes only, NOT the planning weight.
+     * Planning weight is derived from type + module credits + deadline urgency.
      */
-    @Column(name = "estimated_hours")
-    private Double estimatedHours;
-
-    /** Percentage weight of this assessment in the overall module grade (0–100). */
     @Column(name = "weight")
     private Double weight;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "priority", nullable = false)
-    @Builder.Default
-    private AssessmentPriority priority = AssessmentPriority.MEDIUM;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
@@ -82,14 +78,10 @@ public class Assessment {
     }
 
     public enum AssessmentType {
-        ASSIGNMENT, EXAM, QUIZ, PRESENTATION, PROJECT, REPORT, OTHER
+        ASSIGNMENT, EXAM, QUIZ, PROJECT, PRESENTATION, REPORT, OTHER
     }
 
     public enum AssessmentStatus {
         PENDING, IN_PROGRESS, COMPLETED, CANCELLED
-    }
-
-    public enum AssessmentPriority {
-        LOW, MEDIUM, HIGH, CRITICAL
     }
 }

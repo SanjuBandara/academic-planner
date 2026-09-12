@@ -92,7 +92,6 @@ export default function Planner() {
   const handleAddTimeSlot = (day: string) => {
     setDailyState((prev) => {
       const currentSlots = prev[day]?.timeSlots || [];
-      // Default initial slot suggestion
       const nextStart = currentSlots.length === 0 ? "09:00" : "14:00";
       const nextEnd = currentSlots.length === 0 ? "12:00" : "16:00";
       return {
@@ -133,7 +132,6 @@ export default function Planner() {
   };
 
   const handleGenerate = () => {
-    // Build payload with dailyAvailability
     const dailyAvailability: Record<string, { availableHours: number; timeSlots: TimeSlot[] }> = {};
     const simpleAvailability: Record<string, number> = {};
 
@@ -170,11 +168,11 @@ export default function Planner() {
           <div>
             <h1 className="text-3xl font-serif font-bold text-ink">Adaptive Study Planner</h1>
             <p className="text-slate-600 text-sm mt-1">
-              Generate an intelligent weekly study schedule based on your required daily available hours and optional exact time slots.
+              Generate an intelligent weekly study schedule based on your available study time. Proportional workload allocation driven by priority and credits.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold px-3 py-1.5 rounded-md bg-paper border border-hairline text-ink">
+            <span className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-paper border border-hairline text-ink">
               Weekly Capacity: <b>{totalDeclaredWeeklyHours}h</b>
             </span>
           </div>
@@ -189,7 +187,7 @@ export default function Planner() {
                 <span>Configure Weekly Availability</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Set required daily hours. Optionally add time slots if you want exact session windows.
+                Set required daily study hours. Optionally add time slots if you want exact scheduling windows.
               </p>
             </div>
             <div className="flex items-center space-x-2">
@@ -284,7 +282,6 @@ export default function Planner() {
                           </div>
                         ))}
 
-                        {/* Informative message if slot hours differ from declared hours */}
                         {slotHours !== state.hours && (
                           <p className="text-[9px] text-amber-800 leading-tight">
                             {slotHours < state.hours
@@ -345,15 +342,15 @@ export default function Planner() {
                 <span>Your Generated Weekly Schedule</span>
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Full deterministic schedule prioritized by credit weight, assessment urgency, and task workload.
+                Full deterministic schedule prioritized by credit weight, assessment urgency, and task priority.
               </p>
             </div>
 
             {activePlan && activePlan.items && activePlan.items.length > 0 && (
-              <div className="flex items-center space-x-2 bg-paper p-1 rounded-lg border border-hairline">
+              <div className="flex items-center space-x-2 bg-paper p-1 rounded-xl border border-hairline">
                 <button
                   onClick={() => setActiveTab("TABLE")}
-                  className={`px-3 py-1 rounded text-xs font-semibold transition ${
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
                     activeTab === "TABLE"
                       ? "bg-ink text-gold shadow-sm font-bold"
                       : "text-slate-600 hover:text-ink"
@@ -363,7 +360,7 @@ export default function Planner() {
                 </button>
                 <button
                   onClick={() => setActiveTab("CARDS")}
-                  className={`px-3 py-1 rounded text-xs font-semibold transition ${
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
                     activeTab === "CARDS"
                       ? "bg-ink text-gold shadow-sm font-bold"
                       : "text-slate-600 hover:text-ink"
@@ -399,15 +396,19 @@ export default function Planner() {
                   <span>
                     Total Planned Study Time: <b className="text-gold">{activePlan.totalPlannedHours} hrs</b>
                   </span>
+                  <span className="text-slate-400">|</span>
+                  <span>
+                    Available: <b>{activePlan.totalAvailableHours} hrs</b>
+                  </span>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <span className="px-2 py-0.5 rounded bg-gold/20 text-gold font-mono font-bold text-[10px]">
+                  <span className="px-2.5 py-0.5 rounded-full bg-gold/20 text-gold font-mono font-bold text-[10px]">
                     STATUS: {activePlan.status}
                   </span>
                 </div>
               </div>
 
-              {/* TABLE VIEW: Section 19 Required Table Structure */}
+              {/* TABLE VIEW */}
               {activeTab === "TABLE" ? (
                 <div className="bg-white rounded-2xl border border-hairline shadow-sm overflow-hidden">
                   <div className="overflow-x-auto">
@@ -418,8 +419,7 @@ export default function Planner() {
                           <th className="py-3 px-4">Time</th>
                           <th className="py-3 px-4 text-right">Duration</th>
                           <th className="py-3 px-4">Study Activity</th>
-                          <th className="py-3 px-4">Task</th>
-                          <th className="py-3 px-4">Assessment</th>
+                          <th className="py-3 px-4">Type</th>
                           <th className="py-3 px-4">Module</th>
                           <th className="py-3 px-4 text-center">Actions</th>
                         </tr>
@@ -437,12 +437,8 @@ export default function Planner() {
                               ? `${item.startTime.slice(0, 5)} - ${item.endTime.slice(0, 5)}`
                               : "";
 
-                          // Study Activity representation
-                          const studyActivity = item.taskTitle
-                            ? `Task: ${item.taskTitle}`
-                            : item.assessmentTitle
-                            ? `Prep: ${item.assessmentTitle}`
-                            : `${item.moduleName || item.moduleCode} Study Session`;
+                          const isAssessmentPrep = item.activityType === "ASSESSMENT_PREP" || !!item.assessmentId;
+                          const activityLabel = item.activityLabel || (item.taskTitle ? `Task: ${item.taskTitle}` : item.assessmentTitle ? `Prep: ${item.assessmentTitle}` : "Study Session");
 
                           return (
                             <tr
@@ -461,7 +457,7 @@ export default function Planner() {
                                 <span className="text-[10px] text-slate-400 font-mono">{item.date}</span>
                               </td>
 
-                              {/* Time Column (blank if no exact time slots were provided) */}
+                              {/* Time Column (blank if mode A) */}
                               <td className="py-3.5 px-4 whitespace-nowrap font-mono text-ink">
                                 {formattedTime ? (
                                   <span className="px-2 py-0.5 rounded bg-amber-50 text-ink border border-amber-200 text-xs font-semibold">
@@ -479,42 +475,52 @@ export default function Planner() {
 
                               {/* Study Activity Column */}
                               <td className="py-3.5 px-4 max-w-xs font-medium text-ink">
-                                <span className={isCompleted ? "line-through text-slate-400" : ""}>
-                                  {studyActivity}
-                                </span>
+                                <div className="space-y-0.5">
+                                  <span className={`font-semibold text-sm ${isCompleted ? "line-through text-slate-400" : "text-ink"}`}>
+                                    {activityLabel}
+                                  </span>
+                                  {item.taskTitle && item.activityLabel !== item.taskTitle && (
+                                    <span className="block text-[11px] text-slate-500">
+                                      Task: {item.taskTitle}
+                                    </span>
+                                  )}
+                                  {item.assessmentTitle && (
+                                    <span className="block text-[11px] text-amber-700">
+                                      Assessment: {item.assessmentTitle}
+                                    </span>
+                                  )}
+                                </div>
                               </td>
 
-                              {/* Task Column */}
-                              <td className="py-3.5 px-4 text-slate-600 max-w-xs">
-                                {item.taskTitle ? (
-                                  <span className="font-medium text-ink">{item.taskTitle}</span>
-                                ) : (
-                                  <span className="text-slate-300">—</span>
-                                )}
-                              </td>
-
-                              {/* Assessment Column */}
-                              <td className="py-3.5 px-4 text-slate-600 max-w-xs">
-                                {item.assessmentTitle ? (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gold/15 text-gold-dark text-[11px] font-semibold border border-gold/30">
+                              {/* Activity Type Badge */}
+                              <td className="py-3.5 px-4 whitespace-nowrap">
+                                {isAssessmentPrep ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[11px] font-bold border border-purple-200">
                                     <span>📑</span>
-                                    <span>{item.assessmentTitle}</span>
+                                    <span>Assessment Prep</span>
                                   </span>
                                 ) : (
-                                  <span className="text-slate-300">—</span>
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold border border-emerald-200">
+                                    <span>✅</span>
+                                    <span>Task</span>
+                                  </span>
                                 )}
                               </td>
 
                               {/* Module Column */}
                               <td className="py-3.5 px-4 whitespace-nowrap">
-                                <div className="flex items-center space-x-1.5">
-                                  <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 bg-ink text-gold rounded">
-                                    {item.moduleCode}
-                                  </span>
-                                  <span className="text-xs text-slate-700 font-medium truncate max-w-[140px]" title={item.moduleName}>
-                                    {item.moduleName}
-                                  </span>
-                                </div>
+                                {item.moduleCode ? (
+                                  <div className="flex items-center space-x-1.5">
+                                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 bg-ink text-gold rounded">
+                                      {item.moduleCode}
+                                    </span>
+                                    <span className="text-xs text-slate-700 font-medium truncate max-w-[140px]" title={item.moduleName}>
+                                      {item.moduleName}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 italic text-xs">General / Standalone</span>
+                                )}
                               </td>
 
                               {/* Actions Column */}
@@ -524,7 +530,7 @@ export default function Planner() {
                                     <button
                                       onClick={() => statusMutation.mutate({ id: item.id, status: "COMPLETED" })}
                                       disabled={statusMutation.isPending}
-                                      className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white font-semibold rounded text-[11px] transition shadow-sm"
+                                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-[11px] transition shadow-sm"
                                     >
                                       ✓ Done
                                     </button>
@@ -532,7 +538,7 @@ export default function Planner() {
                                     <button
                                       onClick={() => statusMutation.mutate({ id: item.id, status: "PLANNED" })}
                                       disabled={statusMutation.isPending}
-                                      className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded text-[10px] transition"
+                                      className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-[10px] transition"
                                     >
                                       Undo
                                     </button>
@@ -541,7 +547,7 @@ export default function Planner() {
                                     <button
                                       onClick={() => statusMutation.mutate({ id: item.id, status: "SKIPPED" })}
                                       disabled={statusMutation.isPending}
-                                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold rounded text-[10px] transition"
+                                      className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold rounded-lg text-[10px] transition"
                                     >
                                       Skip
                                     </button>
@@ -561,6 +567,8 @@ export default function Planner() {
                   {activePlan.items.map((item) => {
                     const dateObj = new Date(item.date + "T00:00:00");
                     const dayName = dateObj.toLocaleDateString("en-US", { weekday: "long" });
+                    const isAssessmentPrep = item.activityType === "ASSESSMENT_PREP" || !!item.assessmentId;
+                    const activityLabel = item.activityLabel || (item.taskTitle ? item.taskTitle : item.assessmentTitle ? `${item.assessmentTitle} Prep` : "Study Session");
 
                     return (
                       <div
@@ -581,55 +589,60 @@ export default function Planner() {
                             </div>
 
                             {item.startTime && item.endTime ? (
-                              <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-amber-50 text-ink border border-amber-200">
+                              <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-lg bg-amber-50 text-ink border border-amber-200">
                                 ⏱ {item.startTime.slice(0, 5)} - {item.endTime.slice(0, 5)}
                               </span>
                             ) : (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-paper text-slate-600 border border-hairline">
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-paper text-slate-600 border border-hairline">
                                 Daily Session
                               </span>
                             )}
                           </div>
 
-                          <div>
-                            <div className="flex items-center space-x-2">
-                              <span className="text-[10px] font-mono font-bold px-2 py-0.5 bg-ink text-gold rounded">
-                                {item.moduleCode}
-                              </span>
-                              <h4 className="font-bold text-ink text-sm truncate">{item.moduleName}</h4>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              {isAssessmentPrep ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[11px] font-bold border border-purple-200">
+                                  <span>📑</span>
+                                  <span>Assessment Prep</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold border border-emerald-200">
+                                  <span>✅</span>
+                                  <span>Task</span>
+                                </span>
+                              )}
+
+                              {item.moduleCode && (
+                                <span className="text-[10px] font-mono font-bold px-2 py-0.5 bg-ink text-gold rounded-lg">
+                                  {item.moduleCode}
+                                </span>
+                              )}
                             </div>
 
-                            {item.taskTitle && (
-                              <p className="text-xs text-slate-600 mt-2">
-                                <span className="font-semibold text-ink">Task:</span> {item.taskTitle}
-                              </p>
-                            )}
-
-                            {item.assessmentTitle && (
-                              <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gold/15 text-gold-dark text-[11px] font-semibold border border-gold/30">
-                                <span>📑</span>
-                                <span>Target: {item.assessmentTitle}</span>
-                              </div>
+                            <h4 className="font-bold text-ink text-base leading-snug">{activityLabel}</h4>
+                            {item.moduleName && (
+                              <p className="text-xs text-slate-500">{item.moduleName}</p>
                             )}
                           </div>
                         </div>
 
                         <div className="flex items-center justify-between pt-3 text-xs border-t border-hairline">
                           <span className="text-slate-600 font-medium">
-                            Duration: <b className="text-ink">{item.plannedHours}h</b>
+                            Duration: <b className="text-ink text-sm">{item.plannedHours}h</b>
                           </span>
                           <div className="flex items-center space-x-1.5">
                             {item.status !== "COMPLETED" ? (
                               <button
                                 onClick={() => statusMutation.mutate({ id: item.id, status: "COMPLETED" })}
-                                className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white font-semibold rounded text-xs transition shadow-sm"
+                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs transition shadow-sm"
                               >
                                 ✓ Done
                               </button>
                             ) : (
                               <button
                                 onClick={() => statusMutation.mutate({ id: item.id, status: "PLANNED" })}
-                                className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded text-xs transition"
+                                className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-lg text-xs transition"
                               >
                                 Undo
                               </button>
@@ -637,7 +650,7 @@ export default function Planner() {
                             {item.status !== "SKIPPED" && (
                               <button
                                 onClick={() => statusMutation.mutate({ id: item.id, status: "SKIPPED" })}
-                                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold rounded text-xs transition"
+                                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold rounded-lg text-xs transition"
                               >
                                 Skip
                               </button>

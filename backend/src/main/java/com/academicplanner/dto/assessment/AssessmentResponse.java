@@ -1,13 +1,29 @@
 package com.academicplanner.dto.assessment;
 
 import com.academicplanner.entity.Assessment;
-import com.academicplanner.entity.Assessment.AssessmentPriority;
 import com.academicplanner.entity.Assessment.AssessmentStatus;
 import com.academicplanner.entity.Assessment.AssessmentType;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 
+/**
+ * Response DTO for an assessment.
+ *
+ * <p>Includes {@code calculatedBasePriority} so the UI can display
+ * "System Priority: 3" (for QUIZ) without allowing the user to change it.
+ *
+ * <p>Priority mapping (base values):
+ * <pre>
+ *   EXAM         = 5
+ *   PROJECT      = 4
+ *   ASSIGNMENT   = 3
+ *   QUIZ         = 3
+ *   REPORT       = 3
+ *   PRESENTATION = 3
+ *   OTHER        = 2
+ * </pre>
+ */
 public record AssessmentResponse(
         Long id,
         Long moduleId,
@@ -17,9 +33,9 @@ public record AssessmentResponse(
         AssessmentType type,
         String description,
         LocalDateTime dueDateTime,
-        Long daysUntilDeadline,   // null if no deadline; negative if overdue
+        Long daysUntilDeadline,
         Double weight,
-        AssessmentPriority priority,
+        int calculatedBasePriority,
         AssessmentStatus status,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
@@ -40,10 +56,24 @@ public record AssessmentResponse(
                 assessment.getDueDateTime(),
                 daysUntil,
                 assessment.getWeight(),
-                assessment.getPriority(),
+                basePriorityFor(assessment.getType()),
                 assessment.getStatus(),
                 assessment.getCreatedAt(),
                 assessment.getUpdatedAt()
         );
+    }
+
+    /** Returns the base planning priority for an assessment type. */
+    public static int basePriorityFor(AssessmentType type) {
+        if (type == null) return 2;
+        return switch (type) {
+            case EXAM         -> 5;
+            case PROJECT      -> 4;
+            case ASSIGNMENT   -> 3;
+            case QUIZ         -> 3;
+            case REPORT       -> 3;
+            case PRESENTATION -> 3;
+            case OTHER        -> 2;
+        };
     }
 }

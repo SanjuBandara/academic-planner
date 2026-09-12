@@ -1,146 +1,135 @@
 package com.academicplanner.planning;
 
 import com.academicplanner.entity.Assessment.AssessmentType;
-import com.academicplanner.planning.model.PlanningCandidate;
-import com.academicplanner.planning.model.PriorityFactors;
+import com.academicplanner.entity.Task.TaskPriority;
+import com.academicplanner.planning.model.PlanningItem;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * Stateless, deterministic calculator for planning priority scores.
+ * Calculates the planning weight for each {@link PlanningItem}.
  *
- * <h2>Formula</h2>
+ * <h2>Assessment Weight Formula</h2>
  * <pre>
- *   priorityScore = typeWeight × creditWeight × urgencyWeight × workloadFactor
+ *   Base Priority (by type):
+ *     EXAM         = 5
+ *     PROJECT      = 4
+ *     ASSIGNMENT   = 3
+ *     QUIZ         = 3
+ *     REPORT       = 3
+ *     PRESENTATION = 3
+ *     OTHER        = 2
+ *
+ *   Effective Priority = Base Priority + Deadline Urgency Bonus
+ *
+ *   Assessment Weight  = Effective Priority × Module Credits
  * </pre>
  *
- * <h2>Type weights (academic importance)</h2>
+ * <h2>Task Weight Formula</h2>
  * <pre>
- *   EXAM         = 5.0
- *   PROJECT      = 3.0
- *   ASSIGNMENT   = 2.5
- *   REPORT       = 2.5
- *   QUIZ         = 2.0
- *   PRESENTATION = 2.0
- *   OTHER        = 1.0
+ *   User Priority Value:
+ *     HIGH   = 2.5
+ *     MEDIUM = 2.0
+ *     LOW    = 1.0
+ *
+ *   Task Weight = Priority Value × Module Credits
+ *   (Module Credits = 1 if task has no module)
  * </pre>
  *
- * <h2>Credit weight</h2>
- * Normalised: {@code moduleCredits / totalCreditsAcrossAllCandidateModules}.
- * Candidates with no module (standalone tasks) receive a weight of
- * {@code 1 / (distinctModuleCount + 1)} to avoid completely suppressing them.
- *
- * <h2>Urgency weight</h2>
- * Derived from {@link DeadlineAnalyzer#urgencyMultiplier(long)}.
- *
- * <h2>Workload factor</h2>
- * {@code remainingHours / maxRemainingHours} across all candidates.
- * A candidate with 0 remaining hours gets a score of 0 (nothing to schedule).
+ * <p>This class is stateless. All inputs are explicit — no side effects.
  */
 @Component
 public class PriorityCalculator {
 
-    // ── Type weights ───────────────────────────────────────────────────────
-    public static final double TYPE_EXAM         = 5.0;
-    public static final double TYPE_PROJECT      = 3.0;
-    public static final double TYPE_ASSIGNMENT   = 2.5;
-    public static final double TYPE_REPORT       = 2.5;
-    public static final double TYPE_QUIZ         = 2.0;
-    public static final double TYPE_PRESENTATION = 2.0;
-    public static final double TYPE_OTHER        = 1.0;
+    // ── Assessment base priority values ──────────────────────────────────────
 
-    private final DeadlineAnalyzer deadlineAnalyzer;
+    public static final int BASE_EXAM         = 5;
+    public static final int BASE_PROJECT      = 4;
+    public static final int BASE_ASSIGNMENT   = 3;
+    public static final int BASE_QUIZ         = 3;
+    public static final int BASE_REPORT       = 3;
+    public static final int BASE_PRESENTATION = 3;
+    public static final int BASE_OTHER        = 2;
 
-    public PriorityCalculator(DeadlineAnalyzer deadlineAnalyzer) {
-        this.deadlineAnalyzer = deadlineAnalyzer;
+    // ── Task priority numeric values ─────────────────────────────────────────
+
+    public static final double TASK_HIGH   = 2.5;
+    public static final double TASK_MEDIUM = 2.0;
+    public static final double TASK_LOW    = 1.0;
+
+    private final DeadlineUrgencyCalculator urgencyCalculator;
+
+    public PriorityCalculator(DeadlineUrgencyCalculator urgencyCalculator) {
+        this.urgencyCalculator = urgencyCalculator;
     }
 
-    // ── Public API ─────────────────────────────────────────────────────────
+    // ── Public API ────────────────────────────────────────────────────────────
 
     /**
-     * Returns the academic type weight for an assessment type.
-     * Standalone tasks (no type) receive {@link #TYPE_OTHER}.
+     * Computes and sets the {@code weight} on every planning item in the list.
+     *
+     * @param items list of planning items (mutated in place)
+     * @param now   reference time for deadline urgency calculation
      */
-    public double typeWeight(AssessmentType type) {
-        if (type == null) return TYPE_OTHER;
+    public void calculateAll(List<PlanningItem> items, LocalDateTime now) {
+        for (PlanningItem item : items) {
+            double weight = computeWeight(item, now);
+            item.setWeight(weight);
+        }
+    }
+
+    /**
+     * Computes the planning weight for a single item.
+     *
+     * @param item the planning item
+     * @param now  reference time
+     * @return planning weight (positive)
+     */
+    public double computeWeight(PlanningItem item, LocalDateTime now) {
+        int credits = Math.max(1, item.getModuleCredits()); // fallback to 1 if no module
+
+        if (item.isAssessmentItem()) {
+            int basePriority = basePriorityFor(item.getAssessmentType());
+            int urgencyBonus = urgencyCalculator.urgencyBonus(item.getDeadline(), now);
+            int effectivePriority = basePriority + urgencyBonus;
+            return (double) effectivePriority * credits;
+        } else {
+            // Standalone task
+            double priorityValue = taskPriorityValue(item.getTaskPriority());
+            return priorityValue * credits;
+        }
+    }
+
+    // ── Type / priority helpers ───────────────────────────────────────────────
+
+    /**
+     * Returns the base planning priority for an assessment type.
+     * This is the starting value before deadline urgency is added.
+     */
+    public int basePriorityFor(AssessmentType type) {
+        if (type == null) return BASE_OTHER;
         return switch (type) {
-            case EXAM         -> TYPE_EXAM;
-            case PROJECT      -> TYPE_PROJECT;
-            case ASSIGNMENT   -> TYPE_ASSIGNMENT;
-            case REPORT       -> TYPE_REPORT;
-            case QUIZ         -> TYPE_QUIZ;
-            case PRESENTATION -> TYPE_PRESENTATION;
-            case OTHER        -> TYPE_OTHER;
+            case EXAM         -> BASE_EXAM;
+            case PROJECT      -> BASE_PROJECT;
+            case ASSIGNMENT   -> BASE_ASSIGNMENT;
+            case QUIZ         -> BASE_QUIZ;
+            case REPORT       -> BASE_REPORT;
+            case PRESENTATION -> BASE_PRESENTATION;
+            case OTHER        -> BASE_OTHER;
         };
     }
 
     /**
-     * Computes and sets {@link PriorityFactors} on every candidate.
-     *
-     * <p>Must be called after {@link WorkloadEstimator} and
-     * {@link DeadlineAnalyzer} have populated their fields.
-     *
-     * @param candidates candidates to score
-     * @param now        current time reference (for urgency calculation)
+     * Returns the numeric priority value for a task priority level.
      */
-    public void calculateAll(List<PlanningCandidate> candidates,
-                             java.time.LocalDateTime now) {
-        if (candidates.isEmpty()) return;
-
-        // Compute total credits across distinct modules (for credit normalisation)
-        List<com.academicplanner.entity.Module> distinctModules = candidates.stream()
-                .map(PlanningCandidate::getEffectiveModule)
-                .filter(java.util.Objects::nonNull)
-                .distinct()
-                .toList();
-
-        int totalCredits = distinctModules.stream()
-                .mapToInt(com.academicplanner.entity.Module::getCredits)
-                .sum();
-        if (totalCredits <= 0) totalCredits = 1; // guard against no-module or zero-credits scenarios
-
-        // Count distinct modules for standalone-task fallback credit weight
-        long distinctModuleCount = distinctModules.size();
-        double standaloneCreditWeight = 1.0 / (distinctModuleCount + 1);
-
-        // Max remaining hours (for workload factor normalisation)
-        double maxRemaining = candidates.stream()
-                .mapToDouble(PlanningCandidate::getRemainingWorkHours)
-                .max().orElse(1.0);
-        if (maxRemaining <= 0) maxRemaining = 1.0;
-
-        for (PlanningCandidate c : candidates) {
-            double remaining = c.getRemainingWorkHours();
-            if (remaining <= 0) {
-                // Nothing to schedule — score is 0
-                c.setPriorityFactors(new PriorityFactors(0, 0, 0, 0, 0));
-                continue;
-            }
-
-            // 1. Type weight
-            AssessmentType type = c.getAssessment() != null ? c.getAssessment().getType() : null;
-            double tw = typeWeight(type);
-
-            // 2. Credit weight
-            double cw;
-            com.academicplanner.entity.Module effectiveMod = c.getEffectiveModule();
-            if (effectiveMod != null && effectiveMod.getCredits() > 0) {
-                cw = (double) effectiveMod.getCredits() / totalCredits;
-            } else {
-                cw = standaloneCreditWeight;
-            }
-
-            // 3. Urgency weight
-            double uw = deadlineAnalyzer.urgencyMultiplier(c, now);
-
-            // 4. Workload factor
-            double wf = remaining / maxRemaining;
-
-            // 5. Final score
-            double score = tw * cw * uw * wf;
-
-            c.setPriorityFactors(new PriorityFactors(tw, cw, uw, wf, score));
-        }
+    public double taskPriorityValue(TaskPriority priority) {
+        if (priority == null) return TASK_MEDIUM;
+        return switch (priority) {
+            case HIGH   -> TASK_HIGH;
+            case MEDIUM -> TASK_MEDIUM;
+            case LOW    -> TASK_LOW;
+        };
     }
 }

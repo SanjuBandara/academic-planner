@@ -42,7 +42,36 @@ public class StudyPlanService {
         studyPlanRepository.findByUserAndTypeAndStatus(user, PlanType.WEEKLY, PlanStatus.ACTIVE)
                 .ifPresent(p -> p.setStatus(PlanStatus.CANCELLED));
 
-        double totalAvailable = request.availability().values().stream().mapToDouble(Double::doubleValue).sum();
+        // Build DailyAvailability map per day
+        Map<LocalDate, com.academicplanner.planning.model.DailyAvailability> dailyAvailMap = new java.util.LinkedHashMap<>();
+
+        for (int i = 0; i < 7; i++) {
+            LocalDate date = startDate.plusDays(i);
+            String dayName = date.getDayOfWeek().name();
+
+            Double hours = 4.0; // default fallback
+            List<com.academicplanner.planning.model.TimeSlot> timeSlots = new java.util.ArrayList<>();
+
+            if (request.dailyAvailability() != null && request.dailyAvailability().containsKey(dayName)) {
+                DailyAvailabilityRequest dayReq = request.dailyAvailability().get(dayName);
+                if (dayReq.availableHours() != null) {
+                    hours = Math.max(0.0, dayReq.availableHours());
+                } else if (request.availability() != null && request.availability().containsKey(dayName)) {
+                    hours = Math.max(0.0, request.availability().get(dayName));
+                }
+
+                if (dayReq.timeSlots() != null && !dayReq.timeSlots().isEmpty()) {
+                    timeSlots = validateAndMapTimeSlots(dayName, dayReq.timeSlots());
+                }
+            } else if (request.availability() != null && request.availability().containsKey(dayName)) {
+                hours = Math.max(0.0, request.availability().get(dayName));
+            }
+
+            dailyAvailMap.put(date, new com.academicplanner.planning.model.DailyAvailability(date, hours, timeSlots));
+        }
+
+        double totalAvailable = dailyAvailMap.values().stream()
+                .mapToDouble(com.academicplanner.planning.model.DailyAvailability::effectiveSchedulableHours).sum();
 
         StudyPlan studyPlan = StudyPlan.builder()
                 .user(user)
@@ -55,22 +84,13 @@ public class StudyPlanService {
 
         studyPlan = studyPlanRepository.save(studyPlan);
 
-        // Map daily hours from availability input
-        Map<LocalDate, Double> dailyHours = new HashMap<>();
-        for (int i = 0; i < 7; i++) {
-            LocalDate date = startDate.plusDays(i);
-            String dayName = date.getDayOfWeek().name();
-            Double hours = request.availability().getOrDefault(dayName, 4.0); // default 4 hours if omitted
-            dailyHours.put(date, hours);
-        }
-
         List<Assessment> assessments = assessmentRepository.findActivePlanningAssessments(user.getId());
         List<Task> tasks = taskRepository.findActivePlanningTasks(user.getId());
 
         // Run the full deterministic planning pipeline
-        PlanningResult result = planningEngine.generatePlan(studyPlan, assessments, tasks, dailyHours);
+        PlanningResult result = planningEngine.generatePlanWithAvailability(studyPlan, assessments, tasks, dailyAvailMap, java.time.LocalDateTime.now());
 
-        // Log warnings so they are visible in server logs (future: expose via API)
+        // Log warnings if any
         if (result.hasWarnings()) {
             log.warn("[StudyPlanService] Planning warnings for user {}: {}", user.getId(), result.feasibilityWarnings());
         }
@@ -82,6 +102,29 @@ public class StudyPlanService {
         studyPlanRepository.save(studyPlan);
 
         return StudyPlanResponse.from(studyPlan);
+    }
+
+    private List<com.academicplanner.planning.model.TimeSlot> validateAndMapTimeSlots(String dayName, List<TimeSlotRequest> requests) {
+        List<TimeSlotRequest> validRequests = requests.stream()
+                .filter(r -> r.startTime() != null && r.endTime() != null)
+                .sorted(java.util.Comparator.comparing(TimeSlotRequest::startTime))
+                .toList();
+
+        List<com.academicplanner.planning.model.TimeSlot> slots = new java.util.ArrayList<>();
+        TimeSlotRequest prev = null;
+
+        for (TimeSlotRequest curr : validRequests) {
+            if (!curr.startTime().isBefore(curr.endTime())) {
+                throw new IllegalArgumentException("Invalid time slot for " + dayName + ": Start time (" + curr.startTime() + ") must be before end time (" + curr.endTime() + ").");
+            }
+            if (prev != null && curr.startTime().isBefore(prev.endTime())) {
+                throw new IllegalArgumentException("Overlapping time slots for " + dayName + ": [" + prev.startTime() + " - " + prev.endTime() + "] and [" + curr.startTime() + " - " + curr.endTime() + "].");
+            }
+            slots.add(new com.academicplanner.planning.model.TimeSlot(curr.startTime(), curr.endTime()));
+            prev = curr;
+        }
+
+        return slots;
     }
 
     @Transactional(readOnly = true)

@@ -7,11 +7,27 @@ import java.time.LocalDateTime;
 
 /**
  * Represents a granular academic task belonging to a student.
- * Tasks can optionally be linked to a module and/or an assessment.
+ * Tasks can optionally be linked to a module.
  *
- * <p>The planning engine always works with {@code remainingHours} (not the
- * original estimate) so that partially-completed work reduces future allocation.
- * Remaining hours are floored at 0.0 — never negative.
+ * <p>Task priority is USER-SELECTED (High / Medium / Low).
+ * The planning engine uses the numeric priority value × module credits
+ * to determine the task's share of available study time.
+ *
+ * <p>Priority numeric values:
+ * <pre>
+ *   HIGH   = 2.5
+ *   MEDIUM = 2.0
+ *   LOW    = 1.0
+ * </pre>
+ *
+ * <p>Planning weight formula:
+ * <pre>
+ *   Task Weight = priorityValue × moduleCredits
+ * </pre>
+ *
+ * <p>{@code estimatedHours} acts as a cap — the planning engine will not allocate
+ * more hours than this value to the task. Remaining hours are tracked via
+ * {@code remainingHours}, which decreases as the student logs progress.
  */
 @Entity
 @Table(name = "tasks")
@@ -36,27 +52,31 @@ public class Task {
     @JoinColumn(name = "module_id")
     private Module module;
 
-    /** Optional: task belongs to a specific assessment. */
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "assessment_id")
-    private Assessment assessment;
-
     @Column(name = "title", nullable = false)
     private String title;
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
+    /**
+     * Total estimated work hours. Acts as a planning cap — the engine will
+     * not allocate more than this. Null means no cap (allocation determined
+     * purely by weight).
+     */
     @Column(name = "estimated_hours")
     private Double estimatedHours;
 
     /**
      * Remaining hours of work. Updated whenever the student records progress.
-     * Must never go below 0.
+     * Must never go below 0. When null, falls back to estimatedHours.
      */
     @Column(name = "remaining_hours")
     private Double remainingHours;
 
+    /**
+     * User-selected priority. Drives planning weight calculation.
+     * HIGH=2.5, MEDIUM=2.0, LOW=1.0
+     */
     @Enumerated(EnumType.STRING)
     @Column(name = "priority", nullable = false)
     @Builder.Default
@@ -95,11 +115,24 @@ public class Task {
         this.updatedAt = LocalDateTime.now();
     }
 
+    /** Returns the numeric priority value used by the planning engine. */
+    public double priorityValue() {
+        return switch (priority) {
+            case HIGH   -> 2.5;
+            case MEDIUM -> 2.0;
+            case LOW    -> 1.0;
+        };
+    }
+
     public enum TaskStatus {
         TODO, IN_PROGRESS, COMPLETED, CANCELLED
     }
 
+    /**
+     * User-selectable priority levels.
+     * CRITICAL removed — priorities are High / Medium / Low only.
+     */
     public enum TaskPriority {
-        LOW, MEDIUM, HIGH, CRITICAL
+        HIGH, MEDIUM, LOW
     }
 }

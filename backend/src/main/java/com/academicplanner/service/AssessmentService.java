@@ -54,7 +54,6 @@ public class AssessmentService {
                 .description(request.description())
                 .dueDateTime(request.dueDateTime())
                 .weight(request.weight())
-                .priority(request.priority() != null ? request.priority() : Assessment.AssessmentPriority.MEDIUM)
                 .status(request.status() != null ? request.status() : Assessment.AssessmentStatus.PENDING)
                 .build();
 
@@ -71,7 +70,6 @@ public class AssessmentService {
         assessment.setDescription(request.description());
         assessment.setDueDateTime(request.dueDateTime());
         assessment.setWeight(request.weight());
-        if (request.priority() != null) assessment.setPriority(request.priority());
         if (request.status() != null) assessment.setStatus(request.status());
 
         return AssessmentResponse.from(assessmentRepository.save(assessment));
