@@ -1,81 +1,72 @@
 """
-CP-SAT variable layer.
+CP-SAT variable layer (spec Section 7).
 
-Phase 1 uses a discrete-slot assignment formulation rather than one interval
-variable per entity, per the spec's guidance to reason carefully about time
-representation:
+Uses the discrete-slot assignment formulation: one Boolean variable
+x[activity_id, slot_index] per (activity, slot) pair where the slot lies
+inside a declared availability window AND on/before the activity's
+deadline. x[a, s] == 1 means "activity a is being studied during slot s".
 
-    - The planning period + availability windows are discretized into
-      fixed-size time slots (app.config.TimeGranularity, default 15 min).
-    - One Boolean variable x[activity_id, slot_index] is created for every
-      (activity, slot) pair where the slot lies inside a declared
-      availability window AND on/before the activity's deadline.
-    - x[a, s] == 1 means "activity a is being studied during slot s".
-
-This keeps the model explainable: no-overlap, capacity, and deadline
-constraints all reduce to simple linear sums over these booleans. Sessions
-(contiguous blocks) are reconstructed from the solution afterwards.
+All date/time <-> slot arithmetic goes through app.solver.time_units —
+nothing here computes minutes-per-slot itself (spec Section 4).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime
 
 from ortools.sat.python import cp_model
 
 from app.config import PlanningConfig
 from app.domain.activity import Activity
 from app.domain.availability import AvailabilityWindow
+from app.solver.time_units import datetime_to_absolute_slot, slot_to_time_of_day
 
 
 @dataclass(frozen=True)
 class Slot:
-    index: int
+    index: int          # absolute slot index (see time_units.datetime_to_absolute_slot)
     date: date
-    start_time: time
-    end_time: time
-
-    def start_datetime(self) -> datetime:
-        return datetime.combine(self.date, self.start_time)
+    start_time: object   # datetime.time
+    end_time: object      # datetime.time
 
 
-def build_slots(availability: list[AvailabilityWindow], config: PlanningConfig) -> list[Slot]:
-    """Expands every availability window into fixed-size Slot objects, in order."""
+def build_slots(availability: list[AvailabilityWindow], config: PlanningConfig, period_start: date) -> list[Slot]:
+    """Expands every availability window into fixed-size Slot objects, in absolute-slot order."""
     slot_minutes = config.time.slot_minutes
     slots: list[Slot] = []
-    index = 0
 
-    # Sort windows chronologically so slot indices increase with time —
-    # this makes deadline comparisons a simple index comparison later.
     ordered = sorted(availability, key=lambda w: (w.date, w.start_time))
 
     for window in ordered:
-        cursor = datetime.combine(window.date, window.start_time)
-        end = datetime.combine(window.date, window.end_time)
-        while cursor + timedelta(minutes=slot_minutes) <= end:
-            slot_end = cursor + timedelta(minutes=slot_minutes)
+        window_start_dt = datetime.combine(window.date, window.start_time)
+        window_end_dt = datetime.combine(window.date, window.end_time)
+        cursor = window_start_dt
+
+        while cursor + _delta(slot_minutes) <= window_end_dt:
+            abs_index = datetime_to_absolute_slot(cursor, period_start, slot_minutes)
+            slot_end = cursor + _delta(slot_minutes)
             slots.append(Slot(
-                index=index,
-                date=window.date,
+                index=abs_index,
+                date=cursor.date(),
                 start_time=cursor.time(),
                 end_time=slot_end.time(),
             ))
-            index += 1
             cursor = slot_end
 
     return slots
+
+
+def _delta(minutes: int):
+    from datetime import timedelta
+    return timedelta(minutes=minutes)
 
 
 @dataclass
 class AssignmentVariables:
     model: cp_model.CpModel
     slots: list[Slot]
-    # (activity_id, slot_index) -> BoolVar, only present when the slot is a
-    # legal candidate for that activity (inside availability, before deadline).
     x: dict[tuple[str, int], cp_model.IntVar]
-    # activity_id -> list of slot indices legal for that activity
     activity_slots: dict[str, list[int]]
-    # slot_index -> list of activity_ids that could occupy it
     slot_activities: dict[int, list[str]]
 
 
@@ -83,23 +74,28 @@ def build_assignment_variables(
     model: cp_model.CpModel,
     activities: list[Activity],
     slots: list[Slot],
+    config: PlanningConfig,
+    period_start: date,
 ) -> AssignmentVariables:
     x: dict[tuple[str, int], cp_model.IntVar] = {}
     activity_slots: dict[str, list[int]] = {a.id: [] for a in activities}
     slot_activities: dict[int, list[str]] = {s.index: [] for s in slots}
+    slot_minutes = config.time.slot_minutes
 
     for activity in activities:
-        if activity.remaining_work_units <= 0:
-            # Completed-activity constraint (Section 6): no variables at all
-            # are created for activities with no remaining work, so the
-            # solver structurally cannot schedule them.
+        if activity.remaining_hours <= 0:
+            # Completed-activity constraint (Section 8): no variables at all.
             continue
 
-        deadline_dt = activity.deadline
+        deadline_slot = (
+            datetime_to_absolute_slot(activity.deadline, period_start, slot_minutes)
+            if activity.deadline is not None
+            else None
+        )
 
         for slot in slots:
-            if deadline_dt is not None and slot.start_datetime() > deadline_dt:
-                # Deadline constraint (Section 6): slot starts after the
+            if deadline_slot is not None and slot.index > deadline_slot:
+                # Deadline constraint (Section 8-D): slot starts after the
                 # deadline -> not a legal candidate for this activity.
                 continue
 

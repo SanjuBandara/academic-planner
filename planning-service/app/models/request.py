@@ -1,34 +1,11 @@
 """
-Request schema for POST /api/v1/plan.
-
-Mirrors the JSON contract in the Phase 1 spec (Section 11), with validation.
+Request schema for POST /api/v1/plan — Phase 2 contract (spec Section 3).
 """
 from __future__ import annotations
 
 from datetime import date, datetime, time
-from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-
-
-class ActivityTypeIn(str, Enum):
-    EXAM = "EXAM"
-    PROJECT = "PROJECT"
-    ASSIGNMENT = "ASSIGNMENT"
-    QUIZ = "QUIZ"
-    REPORT = "REPORT"
-    PRESENTATION = "PRESENTATION"
-    SELF_STUDY = "SELF_STUDY"
-    LECTURE = "LECTURE"
-    ASSESSMENT = "ASSESSMENT"
-    TASK = "TASK"
-    OTHER = "OTHER"
-
-
-class ImportanceIn(str, Enum):
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"
 
 
 class PlanningPeriodIn(BaseModel):
@@ -60,23 +37,28 @@ class AvailabilityWindowIn(BaseModel):
 
 class ActivityIn(BaseModel):
     id: str
-    type: ActivityTypeIn
     title: str
-    module_id: int | None = Field(default=None, alias="moduleId")
-    module_credits: int | None = Field(default=None, alias="moduleCredits")
+    activity_type: str = Field(alias="activityType")
+    module_id: str | None = Field(default=None, alias="moduleId")
+    credits: float | None = None
     deadline: datetime | None = None
-    remaining_work_units: float = Field(alias="remainingWorkUnits")
-    importance: ImportanceIn = ImportanceIn.MEDIUM
-    user_priority: ImportanceIn | None = Field(default=None, alias="userPriority")
-    productivity_units_per_hour: float | None = Field(default=None, alias="productivityUnitsPerHour")
+    remaining_hours: float = Field(alias="remainingHours")
+    priority: int = 3
 
     model_config = {"populate_by_name": True}
 
-    @field_validator("remaining_work_units")
+    @field_validator("remaining_hours")
     @classmethod
-    def non_negative_remaining_work(cls, v: float) -> float:
+    def non_negative_remaining_hours(cls, v: float) -> float:
         if v < 0:
-            raise ValueError("remainingWorkUnits cannot be negative")
+            raise ValueError("remainingHours cannot be negative")
+        return v
+
+    @field_validator("priority")
+    @classmethod
+    def priority_in_range(cls, v: int) -> int:
+        if not (1 <= v <= 5):
+            raise ValueError("priority must be between 1 and 5")
         return v
 
 
@@ -86,3 +68,24 @@ class PlanningRequest(BaseModel):
     activities: list[ActivityIn] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
+
+    @model_validator(mode="after")
+    def no_overlapping_windows(self) -> "PlanningRequest":
+        """
+        Spec Section 5: 'Validate that availability windows do not overlap.'
+        Checked here across ALL windows sharing a date, not just within a
+        single window (which is already enforced per-window above).
+        """
+        by_date: dict[date, list[AvailabilityWindowIn]] = {}
+        for window in self.availability:
+            by_date.setdefault(window.date, []).append(window)
+
+        for day, windows in by_date.items():
+            ordered = sorted(windows, key=lambda w: w.start_time)
+            for prev, curr in zip(ordered, ordered[1:]):
+                if curr.start_time < prev.end_time:
+                    raise ValueError(
+                        f"Overlapping availability windows on {day}: "
+                        f"[{prev.start_time}-{prev.end_time}] and [{curr.start_time}-{curr.end_time}]"
+                    )
+        return self

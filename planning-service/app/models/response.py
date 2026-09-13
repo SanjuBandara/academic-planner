@@ -1,4 +1,4 @@
-"""Response schema for POST /api/v1/plan."""
+"""Response schema for POST /api/v1/plan — Phase 2 contract (spec Section 12)."""
 from __future__ import annotations
 
 from datetime import date, time
@@ -27,6 +27,8 @@ class SessionOut(BaseModel):
 class StatisticsOut(BaseModel):
     available_minutes: int = Field(alias="availableMinutes")
     planned_minutes: int = Field(alias="plannedMinutes")
+    completed_required_minutes: int = Field(alias="completedRequiredMinutes")
+    unfinished_required_minutes: int = Field(alias="unfinishedRequiredMinutes")
     unallocated_minutes: int = Field(alias="unallocatedMinutes")
 
     model_config = {"populate_by_name": True}

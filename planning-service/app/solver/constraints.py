@@ -1,20 +1,17 @@
 """
-Hard constraints (Section 6 of the spec) for the Phase 1 model.
+Hard constraints (spec Section 8) — the solver may never violate any of these.
 
-Every function here takes the AssignmentVariables built in variables.py and
-adds constraints to the underlying cp_model.CpModel in place. The solver is
-never allowed to violate any of these.
+Structural (no code needed, enforced by variables.py):
+    A. Availability   — x[a,s] only exists for slots inside declared windows
+    D. Deadline        — x[a,s] never created for slots after the deadline
+    (completed)         — no variables created for remaining_hours <= 0
+    F. Session validity/plan-period — every slot is a fixed-size block
+                          strictly inside the requested planning period
 
-Constraints NOT needing explicit code because they are structural:
-    - Availability constraint: x[a, s] only exists for slots inside a
-      declared availability window (see build_slots / build_assignment_variables).
-    - Deadline constraint: x[a, s] is never created for slots after the
-      activity's deadline (see build_assignment_variables).
-    - Completed activity constraint: no variables are created for activities
-      with remaining_work_units <= 0.
-    - Valid session / plan-period constraint: every slot is, by
-      construction, a fixed-size block strictly inside the requested
-      planning period with positive duration.
+Explicit constraints below:
+    B. No overlapping study
+    C. Required work upper bound
+    E. Planning-period / study-capacity (global sanity check)
 """
 from __future__ import annotations
 
@@ -26,7 +23,7 @@ from app.solver.variables import AssignmentVariables
 
 
 def add_no_overlap_constraint(assignment: AssignmentVariables) -> None:
-    """No two activities may occupy the same slot at the same time."""
+    """Constraint B: at most one activity per time slot."""
     model = assignment.model
     for slot_index, activity_ids in assignment.slot_activities.items():
         vars_in_slot = [assignment.x[(aid, slot_index)] for aid in activity_ids]
@@ -34,45 +31,35 @@ def add_no_overlap_constraint(assignment: AssignmentVariables) -> None:
             model.Add(sum(vars_in_slot) <= 1)
 
 
-def add_remaining_workload_constraint(
+def add_required_work_upper_bound(
     assignment: AssignmentVariables,
     activities: list[Activity],
     config: PlanningConfig,
 ) -> None:
     """
-    An activity may never be assigned more scheduled time than its
-    remaining workload converts to. This is what makes the planner schedule
-    REMAINING work only, never the task "from zero" (Section 3).
+    Constraint C: an activity may never be assigned more scheduled units
+    than `remainingHours` converts to. This also implements the "schedule
+    REMAINING work, not from zero" requirement (spec Section 6).
     """
     model = assignment.model
-    slot_minutes = config.time.slot_minutes
 
     for activity in activities:
         slot_ids = assignment.activity_slots.get(activity.id, [])
         if not slot_ids:
             continue
 
-        needed_minutes = config.workload.units_to_minutes(
-            activity.remaining_work_units,
-            activity.productivity_units_per_hour,
-        )
-        max_slots = needed_minutes // slot_minutes
-        # Round up by one slot if there's a meaningful remainder, so a small
-        # amount of remaining work still gets at least one slot of capacity.
-        if needed_minutes % slot_minutes >= slot_minutes / 2:
-            max_slots += 1
-
+        required_units = activity.required_units(config.time.slot_minutes)
         vars_for_activity = [assignment.x[(activity.id, s)] for s in slot_ids]
-        model.Add(sum(vars_for_activity) <= max_slots)
+        model.Add(sum(vars_for_activity) <= required_units)
 
 
 def add_study_capacity_constraint(assignment: AssignmentVariables) -> None:
     """
-    Total scheduled time cannot exceed total available study time.
-    This falls out of the no-overlap constraint plus the fact that x[a,s]
-    only exists inside availability windows, but we add it explicitly as a
-    global sum for clarity/explainability, per the spec's guidance to
-    favor explicit, readable constraints in Phase 1.
+    Constraint E (global sanity check): total scheduled units can never
+    exceed the total number of available units. Already implied by
+    no-overlap + availability-only variables, but kept explicit for
+    readability/explainability per the spec's Phase 1 guidance (still
+    honored in Phase 2).
     """
     model = assignment.model
     all_vars = list(assignment.x.values())
@@ -87,5 +74,5 @@ def apply_all_hard_constraints(
     config: PlanningConfig,
 ) -> None:
     add_no_overlap_constraint(assignment)
-    add_remaining_workload_constraint(assignment, activities, config)
+    add_required_work_upper_bound(assignment, activities, config)
     add_study_capacity_constraint(assignment)

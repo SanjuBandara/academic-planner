@@ -1,63 +1,40 @@
 """
 Domain-level representation of something the solver can schedule.
 
-This is intentionally NOT the same shape as the Spring Boot JPA entities
-(Assessment, Task). It is the "planning model" layer described in the
-Phase 1 spec: what the mathematical solver needs, not what the student's
-domain data looks like verbatim.
+Phase 2 field set matches the spec's Section 3/6 contract exactly:
+id, title, activityType, moduleId, credits, deadline, remainingHours,
+priority. This is deliberately NOT the same shape as Java's Assessment/Task
+entities (spec Section 20) — Spring Boot's Phase 3 mapper is responsible
+for that translation.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
 
-
-class ActivityType(str, Enum):
-    EXAM = "EXAM"
-    PROJECT = "PROJECT"
-    ASSIGNMENT = "ASSIGNMENT"
-    QUIZ = "QUIZ"
-    REPORT = "REPORT"
-    PRESENTATION = "PRESENTATION"
-    SELF_STUDY = "SELF_STUDY"
-    LECTURE = "LECTURE"
-    ASSESSMENT = "ASSESSMENT"  # generic fallback when a finer type isn't given
-    TASK = "TASK"
-    OTHER = "OTHER"
-
-
-class Importance(str, Enum):
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"
+from app.solver.time_units import hours_to_units
 
 
 @dataclass(frozen=True)
 class Activity:
-    """
-    A single schedulable activity for one planning run.
-
-    remaining_work_units is the ONLY workload figure the solver plans
-    against — completed work is never rescheduled (Section 3 of the spec).
-    """
-
     id: str
     title: str
-    type: ActivityType
-    module_id: int | None
-    module_credits: int | None
+    activity_type: str
+    module_id: str | None
+    credits: float | None
     deadline: datetime | None
-    remaining_work_units: float
-    importance: Importance = Importance.MEDIUM
-    user_priority: Importance | None = None  # explicit student override, if any
-    productivity_units_per_hour: float | None = None  # activity-specific override
+    remaining_hours: float
+    priority: int = 3  # student/system-set priority, e.g. 1 (low) .. 5 (high)
 
     def __post_init__(self):
-        if self.remaining_work_units < 0:
-            raise ValueError(f"Activity {self.id}: remaining_work_units cannot be negative")
+        if self.remaining_hours < 0:
+            raise ValueError(f"Activity {self.id}: remainingHours cannot be negative")
 
-    @property
-    def effective_importance(self) -> Importance:
-        """User-set priority overrides the activity-type importance when present."""
-        return self.user_priority or self.importance
+    def required_units(self, slot_minutes: int) -> int:
+        """
+        Whole time units needed to complete all remaining work, per spec
+        Section 7: `requiredUnits = remainingHours * (60 / slotMinutes)`.
+        No productivity/conversion factor — remainingHours is taken at
+        face value, since the spec's Phase 2 model does not introduce one.
+        """
+        return hours_to_units(self.remaining_hours, slot_minutes)

@@ -6,21 +6,21 @@ import java.time.LocalDateTime;
  * One schedulable activity, as sent to the Python planning service.
  *
  * <p>
- * This is the "planning model" shape (Section 16 of the spec) — it is
- * deliberately NOT the JPA {@code Assessment}/{@code Task} entity shape.
- * {@link com.academicplanner.planning.client.PlanningRequestMapper} is
- * responsible for converting domain entities into this DTO.
+ * <b>Phase 2 contract</b> (breaking change from Phase 1): the Python
+ * service now takes {@code remainingHours} directly (no work-unit/
+ * productivity conversion), a numeric {@code priority} (1-5) instead of
+ * HIGH/MEDIUM/LOW importance strings, {@code credits} as a plain double,
+ * and {@code moduleId} as a String (module code, not a numeric DB id) —
+ * matching the Python service's {@code app/models/request.py::ActivityIn}.
  */
 public record ActivityDto(
                 String id,
-                String type, // EXAM, PROJECT, ASSIGNMENT, QUIZ, REPORT, PRESENTATION, TASK, OTHER...
                 String title,
-                Long moduleId,
-                Integer moduleCredits,
+                String activityType, // e.g. ASSESSMENT_PREP, TASK, SELF_STUDY, LECTURE...
+                String moduleId, // nullable — module code, e.g. "DSA"
+                Double credits, // nullable
                 LocalDateTime deadline, // nullable
-                double remainingWorkUnits,
-                String importance, // HIGH, MEDIUM, LOW
-                String userPriority, // nullable — explicit student override
-                Double productivityUnitsPerHour // nullable — activity-specific override
+                double remainingHours,
+                int priority // 1 (low) .. 5 (high)
 ) {
 }

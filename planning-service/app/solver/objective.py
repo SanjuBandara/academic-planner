@@ -1,16 +1,27 @@
 """
-Objective function (Section 8, scoped down to Section 13's Phase 1 subset):
+Objective function implementing the lexicographic hierarchy from spec
+Section 10:
 
-    1. maximize high-priority work
-    2. maximize total completed workload
-    3. minimize unused available time
-    4. minimize fragmentation
+    1. (hard constraints — not scored here)
+    2. Maximize completed required work
+    3. Protect earlier deadlines
+    4. Protect high-priority activities
+    5. Consider module credits (weighting only — never extra hours)
+    6. Prefer contiguous study sessions
+    7. Reduce unnecessary context switching
 
-Kept as small, separately-computed terms summed at the end so more terms
-(module balance, preferred study periods, etc.) can be added in later
-phases without touching this structure. All coefficients come from
-app.config.ObjectiveWeights / ImportanceWeights — nothing here is a bare
-magic number.
+Implementation note (documented per spec Section 10's requirement to
+explain any weighted-sum choice): CP-SAT doesn't have a native
+"lexicographic maximize" primitive without multiple sequential solves, so
+this uses a big-M weighted sum — each tier's coefficient
+(app.config.LexicographicWeights) is several orders of magnitude larger
+than the one below it. For realistic planning-period sizes (a handful of
+activities, at most a few hundred 15-minute slots) this behaves as
+lexicographic in practice: no combination of lower-tier gains can outweigh
+one unit of a higher tier. It is an approximation, not a mathematical
+guarantee, at extreme scale — true sequential lexicographic optimization
+(solve tier 2, pin its optimal value, optimize tier 3 subject to that,
+etc.) is noted as a future improvement in the README.
 """
 from __future__ import annotations
 
@@ -19,11 +30,23 @@ from ortools.sat.python import cp_model
 from app.config import PlanningConfig
 from app.domain.activity import Activity
 from app.solver.variables import AssignmentVariables, Slot
+from app.solver.time_units import datetime_to_absolute_slot
+
+# Credits are often fractional (e.g. 2.5); CP-SAT objective coefficients
+# must be integers, so credits are scaled up before being multiplied by
+# the tier weight, then implicitly scaled back out by the tier ordering.
+CREDITS_SCALE = 10
 
 
 def _are_adjacent(prev: Slot, curr: Slot) -> bool:
-    """True if `curr` starts exactly when `prev` ends (no gap, same day)."""
     return prev.date == curr.date and prev.end_time == curr.start_time
+
+
+def _hours_until_deadline(activity: Activity, reference_dt) -> float | None:
+    if activity.deadline is None:
+        return None
+    delta = activity.deadline - reference_dt
+    return delta.total_seconds() / 3600.0
 
 
 def build_objective_terms(
@@ -31,52 +54,35 @@ def build_objective_terms(
     assignment: AssignmentVariables,
     activities: list[Activity],
     config: PlanningConfig,
+    period_start,
 ) -> list[cp_model.LinearExpr]:
     terms: list[cp_model.LinearExpr] = []
-    slot_minutes = config.time.slot_minutes
-    obj = config.objective
-
+    weights = config.weights
     activities_by_id = {a.id: a for a in activities}
-    slots_by_index = {s.index: s for s in assignment.slots}
 
-    # --- Terms 1 & 2: completed work + high-priority work -----------------
-    # Every scheduled slot earns a base "work completed" reward, plus an
-    # importance-scaled bonus so higher-priority activities are preferred
-    # when the solver must choose between competing uses of limited time.
-    max_importance_weight = max(config.importance.weights.values())
+    # Deadline urgency is evaluated once per activity, anchored at the start
+    # of the planning period (treated as "now" for this planning run — see
+    # module docstring / README for why no separate wall-clock time is used).
+    from datetime import datetime as _dt
+    reference_dt = _dt.combine(period_start, _dt.min.time())
 
+    # ---- Tiers 2-5: per-slot rewards, scaled by each activity's fixed factors ----
     for (activity_id, slot_index), var in assignment.x.items():
         activity = activities_by_id[activity_id]
-        importance_weight = config.importance.value_for(activity.effective_importance.value)
 
-        base_reward = obj.completed_work_minute_reward * slot_minutes
-        priority_reward = (
-            obj.high_priority_minute_reward
-            * slot_minutes
-            * importance_weight
-            // max_importance_weight
-        )
-        terms.append(var * (base_reward + priority_reward))
+        completion_reward = weights.completed_work
 
-    # --- Term 3: minimize unused available time ----------------------------
-    # For every slot that at least one activity could occupy, "used" equals
-    # the sum of its candidate assignment vars (which the no-overlap
-    # constraint already keeps at 0 or 1). Rewarding `used` directly is
-    # mathematically the same as penalizing (1 - used) up to a constant, so
-    # we add a positive reward for used slots rather than a separate
-    # penalty term — simpler and avoids introducing extra variables.
-    for slot_index, activity_ids in assignment.slot_activities.items():
-        candidate_vars = [assignment.x[(aid, slot_index)] for aid in activity_ids]
-        if not candidate_vars:
-            continue
-        terms.append(sum(candidate_vars) * obj.unused_availability_penalty * slot_minutes)
+        urgency_score = config.urgency.score_for(_hours_until_deadline(activity, reference_dt))
+        deadline_reward = weights.deadline_protection * urgency_score
 
-    # --- Term 4: minimize fragmentation ------------------------------------
-    # A "start" happens whenever an activity begins occupying a slot that
-    # does not immediately continue its own previous slot. Fewer starts =
-    # longer, less fragmented sessions. We only lower-bound `start`
-    # (start >= x[s] - x[s-1]); because it's purely penalized, the solver
-    # will never set it higher than the true minimum.
+        priority_reward = weights.priority * activity.priority
+
+        credits_value = round((activity.credits or 0.0) * CREDITS_SCALE)
+        credits_reward = weights.credits * credits_value
+
+        terms.append(var * (completion_reward + deadline_reward + priority_reward + credits_reward))
+
+    # ---- Tier 6: contiguity — penalize the number of separate session starts ----
     ordered_slots = sorted(assignment.slots, key=lambda s: s.index)
     for activity in activities:
         slot_ids = assignment.activity_slots.get(activity.id, [])
@@ -95,8 +101,31 @@ def build_objective_terms(
                 model.Add(start_var >= curr_var - prev_var)
             else:
                 model.Add(start_var >= curr_var)
-            terms.append(start_var * (-1 * obj.fragmentation_penalty_per_session))
+            terms.append(start_var * (-1 * weights.contiguity))
             prev_slot = slot
+
+    # ---- Tier 7: context switching — reward immediate continuation of the
+    # SAME activity across adjacent slots (fewer switches between different
+    # activities back-to-back). Proper AND-linearization per activity/pair.
+    slots_by_index = {s.index: s for s in assignment.slots}
+    for i in range(len(ordered_slots) - 1):
+        prev_slot = ordered_slots[i]
+        curr_slot = ordered_slots[i + 1]
+        if not _are_adjacent(prev_slot, curr_slot):
+            continue
+
+        prev_activities = assignment.slot_activities.get(prev_slot.index, [])
+        curr_activities = assignment.slot_activities.get(curr_slot.index, [])
+        shared_activities = set(prev_activities) & set(curr_activities)
+
+        for activity_id in shared_activities:
+            prev_var = assignment.x[(activity_id, prev_slot.index)]
+            curr_var = assignment.x[(activity_id, curr_slot.index)]
+            continue_var = model.NewBoolVar(f"continue_{activity_id}_{prev_slot.index}")
+            model.Add(continue_var <= prev_var)
+            model.Add(continue_var <= curr_var)
+            model.Add(continue_var >= prev_var + curr_var - 1)
+            terms.append(continue_var * weights.context_switching)
 
     return terms
 
@@ -106,7 +135,8 @@ def apply_objective(
     assignment: AssignmentVariables,
     activities: list[Activity],
     config: PlanningConfig,
+    period_start,
 ) -> None:
-    terms = build_objective_terms(model, assignment, activities, config)
+    terms = build_objective_terms(model, assignment, activities, config, period_start)
     if terms:
         model.Maximize(sum(terms))
