@@ -6,8 +6,8 @@ import com.academicplanner.entity.StudyPlan.PlanStatus;
 import com.academicplanner.entity.StudyPlan.PlanType;
 import com.academicplanner.entity.StudyPlanItem.ItemStatus;
 import com.academicplanner.exception.ResourceNotFoundException;
-import com.academicplanner.planning.PlanningEngine;
-import com.academicplanner.planning.model.PlanningResult;
+import com.academicplanner.planning.client.CpSatPlanningResult;
+import com.academicplanner.planning.client.CpSatPlanningService;
 import com.academicplanner.repository.AssessmentRepository;
 import com.academicplanner.repository.StudyPlanItemRepository;
 import com.academicplanner.repository.StudyPlanRepository;
@@ -18,7 +18,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -31,7 +30,7 @@ public class StudyPlanService {
     private final StudyPlanItemRepository studyPlanItemRepository;
     private final AssessmentRepository assessmentRepository;
     private final TaskRepository taskRepository;
-    private final PlanningEngine planningEngine;
+    private final CpSatPlanningService cpSatPlanningService;
 
     @Transactional
     public StudyPlanResponse generateWeeklyPlan(WeeklyPlanRequest request, User user) {
@@ -87,12 +86,16 @@ public class StudyPlanService {
         List<Assessment> assessments = assessmentRepository.findActivePlanningAssessments(user.getId());
         List<Task> tasks = taskRepository.findActivePlanningTasks(user.getId());
 
-        // Run the full deterministic planning pipeline
-        PlanningResult result = planningEngine.generatePlanWithAvailability(studyPlan, assessments, tasks, dailyAvailMap, java.time.LocalDateTime.now());
+        // ======= CP-SAT CUTOVER =======
+        // Replaces: planningEngine.generatePlanWithAvailability(studyPlan, assessments,
+        // tasks, dailyAvailMap, LocalDateTime.now());
+        CpSatPlanningResult result = cpSatPlanningService.generatePlan(
+                studyPlan, startDate, endDate, assessments, tasks, dailyAvailMap);
+        // ===============================
 
         // Log warnings if any
         if (result.hasWarnings()) {
-            log.warn("[StudyPlanService] Planning warnings for user {}: {}", user.getId(), result.feasibilityWarnings());
+            log.warn("[StudyPlanService] Planning warnings for user {}: {}", user.getId(), result.warnings());
         }
 
         List<StudyPlanItem> items = studyPlanItemRepository.saveAll(result.items());
@@ -104,7 +107,8 @@ public class StudyPlanService {
         return StudyPlanResponse.from(studyPlan);
     }
 
-    private List<com.academicplanner.planning.model.TimeSlot> validateAndMapTimeSlots(String dayName, List<TimeSlotRequest> requests) {
+    private List<com.academicplanner.planning.model.TimeSlot> validateAndMapTimeSlots(String dayName,
+            List<TimeSlotRequest> requests) {
         List<TimeSlotRequest> validRequests = requests.stream()
                 .filter(r -> r.startTime() != null && r.endTime() != null)
                 .sorted(java.util.Comparator.comparing(TimeSlotRequest::startTime))
@@ -115,10 +119,12 @@ public class StudyPlanService {
 
         for (TimeSlotRequest curr : validRequests) {
             if (!curr.startTime().isBefore(curr.endTime())) {
-                throw new IllegalArgumentException("Invalid time slot for " + dayName + ": Start time (" + curr.startTime() + ") must be before end time (" + curr.endTime() + ").");
+                throw new IllegalArgumentException("Invalid time slot for " + dayName + ": Start time ("
+                        + curr.startTime() + ") must be before end time (" + curr.endTime() + ").");
             }
             if (prev != null && curr.startTime().isBefore(prev.endTime())) {
-                throw new IllegalArgumentException("Overlapping time slots for " + dayName + ": [" + prev.startTime() + " - " + prev.endTime() + "] and [" + curr.startTime() + " - " + curr.endTime() + "].");
+                throw new IllegalArgumentException("Overlapping time slots for " + dayName + ": [" + prev.startTime()
+                        + " - " + prev.endTime() + "] and [" + curr.startTime() + " - " + curr.endTime() + "].");
             }
             slots.add(new com.academicplanner.planning.model.TimeSlot(curr.startTime(), curr.endTime()));
             prev = curr;
@@ -139,7 +145,8 @@ public class StudyPlanService {
     public StudyPlanResponse getActivePlan(User user) {
         StudyPlan plan = studyPlanRepository.findByUserAndTypeAndStatus(user, PlanType.WEEKLY, PlanStatus.ACTIVE)
                 .orElseThrow(() -> new ResourceNotFoundException("No active study plan found"));
-        List<StudyPlanItem> items = studyPlanItemRepository.findAllByStudyPlan_IdOrderByDateAscStartTimeAsc(plan.getId());
+        List<StudyPlanItem> items = studyPlanItemRepository
+                .findAllByStudyPlan_IdOrderByDateAscStartTimeAsc(plan.getId());
         plan.setItems(items);
         return StudyPlanResponse.from(plan);
     }
