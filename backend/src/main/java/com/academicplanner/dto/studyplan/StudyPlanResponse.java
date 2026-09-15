@@ -18,9 +18,17 @@ public record StudyPlanResponse(
         Double totalPlannedHours,
         List<StudyPlanItemResponse> items,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        /** Solver status returned by the Python CP-SAT service: OPTIMAL, FEASIBLE, INFEASIBLE, UNKNOWN. */
+        String solverStatus,
+        /** Human-readable scheduling warnings from the Python service (e.g. activities that could not be fully scheduled). */
+        List<String> warnings
 ) {
     public static StudyPlanResponse from(StudyPlan plan) {
+        return from(plan, null, null);
+    }
+
+    public static StudyPlanResponse from(StudyPlan plan, String solverStatus, List<String> warnings) {
         List<StudyPlanItemResponse> itemDtos = plan.getItems() == null ? List.of() :
                 plan.getItems().stream().map(StudyPlanItemResponse::from).toList();
         return new StudyPlanResponse(
@@ -33,7 +41,9 @@ public record StudyPlanResponse(
                 plan.getTotalPlannedHours(),
                 itemDtos,
                 plan.getCreatedAt(),
-                plan.getUpdatedAt()
+                plan.getUpdatedAt(),
+                solverStatus,
+                warnings != null ? warnings : List.of()
         );
     }
 
@@ -49,7 +59,9 @@ public record StudyPlanResponse(
                 plan.getTotalPlannedHours(),
                 List.of(),
                 plan.getCreatedAt(),
-                plan.getUpdatedAt()
+                plan.getUpdatedAt(),
+                null,
+                List.of()
         );
     }
 }

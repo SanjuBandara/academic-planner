@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "../components/Layout";
 import { studyPlanApi } from "../api/studyPlanApi";
-import { ItemStatus, TimeSlot, WeeklyPlanRequest } from "../types/academic";
+import { ItemStatus, StudyPlan, TimeSlot, WeeklyPlanRequest } from "../types/academic";
 
 interface DayAvailabilityState {
   hours: number;
@@ -11,6 +11,7 @@ interface DayAvailabilityState {
 
 export default function Planner() {
   const queryClient = useQueryClient();
+  const [lastGeneratedPlan, setLastGeneratedPlan] = useState<StudyPlan | null>(null);
 
   const daysOfWeek = [
     "MONDAY",
@@ -47,11 +48,13 @@ export default function Planner() {
 
   const generateMutation = useMutation({
     mutationFn: (req: WeeklyPlanRequest) => studyPlanApi.generateWeeklyPlan(req),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      setLastGeneratedPlan(data);
       queryClient.invalidateQueries({ queryKey: ["active-study-plan"] });
     },
     onError: (err: any) => {
-      alert("Failed to generate plan: " + (err.response?.data?.message || err.message || "Unknown error"));
+      const msg = err.response?.data?.message || err.message || "Unknown error";
+      alert("Failed to generate plan: " + msg);
     },
   });
 
@@ -386,6 +389,51 @@ export default function Planner() {
             </div>
           ) : (
             <div className="space-y-6">
+              {/* Solver Status + Warnings Banner */}
+              {(lastGeneratedPlan?.solverStatus || (lastGeneratedPlan?.warnings && lastGeneratedPlan.warnings.length > 0)) && (
+                <div className="space-y-2">
+                  {/* Solver Status pill */}
+                  {lastGeneratedPlan?.solverStatus && (
+                    <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-semibold ${
+                      lastGeneratedPlan.solverStatus === "OPTIMAL"
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                        : lastGeneratedPlan.solverStatus === "FEASIBLE"
+                        ? "bg-amber-50 border-amber-200 text-amber-800"
+                        : lastGeneratedPlan.solverStatus === "INFEASIBLE"
+                        ? "bg-red-50 border-red-200 text-red-800"
+                        : "bg-slate-50 border-slate-200 text-slate-700"
+                    }`}>
+                      <span>
+                        {lastGeneratedPlan.solverStatus === "OPTIMAL" && "✅"}
+                        {lastGeneratedPlan.solverStatus === "FEASIBLE" && "⚠️"}
+                        {lastGeneratedPlan.solverStatus === "INFEASIBLE" && "❌"}
+                        {lastGeneratedPlan.solverStatus === "UNKNOWN" && "❓"}
+                      </span>
+                      <span>
+                        CP-SAT Solver: <b>{lastGeneratedPlan.solverStatus}</b>
+                        {lastGeneratedPlan.solverStatus === "OPTIMAL" && " — All activities fully scheduled within your availability windows."}
+                        {lastGeneratedPlan.solverStatus === "FEASIBLE" && " — A schedule was found but may not be fully optimal. Some tasks might need attention."}
+                        {lastGeneratedPlan.solverStatus === "INFEASIBLE" && " — Could not build a complete schedule with the given constraints. Check availability and task durations."}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Scheduling Warnings */}
+                  {lastGeneratedPlan?.warnings && lastGeneratedPlan.warnings.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-1">
+                      <p className="text-xs font-bold text-amber-800 flex items-center gap-1.5">
+                        <span>⚠️</span> Scheduling Notices ({lastGeneratedPlan.warnings.length})
+                      </p>
+                      <ul className="space-y-1 pl-4 list-disc">
+                        {lastGeneratedPlan.warnings.map((w, i) => (
+                          <li key={i} className="text-xs text-amber-900">{w}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Plan Period Summary Banner */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-ink text-white p-4 rounded-xl shadow-md">
                 <div className="flex items-center space-x-4">

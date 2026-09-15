@@ -104,7 +104,9 @@ public class StudyPlanService {
         studyPlan.setItems(items);
         studyPlanRepository.save(studyPlan);
 
-        return StudyPlanResponse.from(studyPlan);
+        // Forward solver status and any scheduling warnings to the response
+        // so the frontend can display e.g. INFEASIBLE banners or partial-schedule notices.
+        return StudyPlanResponse.from(studyPlan, result.solverStatus(), result.warnings());
     }
 
     private List<com.academicplanner.planning.model.TimeSlot> validateAndMapTimeSlots(String dayName,

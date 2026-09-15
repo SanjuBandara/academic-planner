@@ -7,6 +7,7 @@ import com.academicplanner.entity.Module;
 import com.academicplanner.entity.User;
 import com.academicplanner.exception.ResourceNotFoundException;
 import com.academicplanner.repository.AssessmentRepository;
+import com.academicplanner.repository.StudyPlanItemRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +21,7 @@ public class AssessmentService {
 
     private final AssessmentRepository assessmentRepository;
     private final ModuleService moduleService;
+    private final StudyPlanItemRepository studyPlanItemRepository;
 
     @Transactional(readOnly = true)
     public List<AssessmentResponse> getAllByModule(Long moduleId, User user) {
@@ -79,6 +81,9 @@ public class AssessmentService {
     public void delete(Long id, User user) {
         Assessment assessment = assessmentRepository.findByIdAndModule_Semester_User_Id(id, user.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Assessment not found: " + id));
+        // Nullify FK references in study_plan_items so the delete doesn't
+        // fail with a foreign key constraint violation.
+        studyPlanItemRepository.nullifyAssessmentReference(id);
         assessmentRepository.delete(assessment);
     }
 

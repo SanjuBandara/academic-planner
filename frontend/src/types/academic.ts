@@ -140,6 +140,10 @@ export interface StudyPlan {
   totalAvailableHours: number;
   totalPlannedHours: number;
   items: StudyPlanItem[];
+  /** OPTIMAL | FEASIBLE | INFEASIBLE | UNKNOWN — from the Python CP-SAT solver */
+  solverStatus?: string | null;
+  /** Per-activity scheduling warnings from the Python service */
+  warnings?: string[];
 }
 
 export interface WeeklyPlanRequest {

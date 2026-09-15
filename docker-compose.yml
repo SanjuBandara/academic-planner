@@ -1,0 +1,75 @@
+﻿services:
+  # ─── PostgreSQL ───────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: academic-planner-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: academic_planner
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres} -d academic_planner"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Python CP-SAT Planning Microservice ─────────────────────────────────────
+  planning-service:
+    build:
+      context: ./planning-service
+      dockerfile: Dockerfile
+    container_name: academic-planner-planning
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── Spring Boot Backend ──────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: academic-planner-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      planning-service:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/academic_planner
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      PLANNING_SERVICE_URL: http://planning-service:8000
+      PLANNING_CONNECT_TIMEOUT_MS: 2000
+      PLANNING_READ_TIMEOUT_MS: 30000
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173}
+    ports:
+      - "8080:8080"
+
+  # ─── React Frontend (dev — remove when using Vercel/Netlify) ─────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: academic-planner-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+    ports:
+      - "5173:5173"
+
+volumes:
+  postgres_data:

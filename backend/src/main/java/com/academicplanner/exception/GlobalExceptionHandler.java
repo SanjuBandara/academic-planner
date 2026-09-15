@@ -1,5 +1,6 @@
 package com.academicplanner.exception;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -75,6 +76,24 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
         ErrorResponse body = ErrorResponse.of(HttpStatus.BAD_REQUEST.value(), ex.getMessage());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
+    }
+
+    // 503 - Python planning microservice unreachable or returned a server error
+    @ExceptionHandler(PlanningServiceUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handlePlanningUnavailable(PlanningServiceUnavailableException ex) {
+        ErrorResponse body = ErrorResponse.of(HttpStatus.SERVICE_UNAVAILABLE.value(), ex.getMessage());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+    }
+
+    // 409 - Database constraint violation (e.g. FK integrity when deleting a referenced entity)
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException ex) {
+        ErrorResponse body = ErrorResponse.of(
+                HttpStatus.CONFLICT.value(),
+                "Cannot complete this operation because related records exist. " +
+                "Delete or reassign those records first."
+        );
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     // 500 - Fallback for anything unexpected. Never leak internal details.
