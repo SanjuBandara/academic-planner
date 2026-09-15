@@ -56,14 +56,25 @@ public class PlanningRequestMapper {
         List<AvailabilityWindowDto> windows = new ArrayList<>();
         for (Map.Entry<LocalDate, DailyAvailability> entry : dailyAvailability.entrySet()) {
             DailyAvailability day = entry.getValue();
-            if (!day.hasTimeSlots()) {
-                // Hours-only availability can't be placed by this solver formulation
-                // without an arbitrary window guess — skipped rather than guessed.
-                continue;
+
+            if (day.hasTimeSlots()) {
+                // User provided explicit time slots — use them directly
+                for (TimeSlot slot : day.timeSlots()) {
+                    windows.add(new AvailabilityWindowDto(entry.getKey(), slot.startTime(), slot.endTime()));
+                }
+            } else if (day.availableHours() > 0) {
+                // Hours-only: generate a default window starting at 09:00
+                // with duration = availableHours (capped at 16 hours to stay within a day)
+                double hours = Math.min(day.availableHours(), 16.0);
+                java.time.LocalTime start = java.time.LocalTime.of(9, 0);
+                java.time.LocalTime end = start.plusMinutes((long) (hours * 60));
+                // If end goes past midnight cap at 23:59
+                if (end.isBefore(start)) {
+                    end = java.time.LocalTime.of(23, 59);
+                }
+                windows.add(new AvailabilityWindowDto(entry.getKey(), start, end));
             }
-            for (TimeSlot slot : day.timeSlots()) {
-                windows.add(new AvailabilityWindowDto(entry.getKey(), slot.startTime(), slot.endTime()));
-            }
+            // If availableHours == 0, skip the day entirely (no study time)
         }
         return windows;
     }

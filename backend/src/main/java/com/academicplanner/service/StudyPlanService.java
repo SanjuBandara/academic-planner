@@ -101,7 +101,8 @@ public class StudyPlanService {
         List<StudyPlanItem> items = studyPlanItemRepository.saveAll(result.items());
 
         studyPlan.setTotalPlannedHours(result.totalPlannedHours());
-        studyPlan.setItems(items);
+        studyPlan.getItems().clear();
+        studyPlan.getItems().addAll(items);
         studyPlanRepository.save(studyPlan);
 
         // Forward solver status and any scheduling warnings to the response

@@ -1,5 +1,6 @@
 package com.academicplanner.planning.client;
 
+import com.academicplanner.exception.PlanningServiceUnavailableException;
 import com.academicplanner.planning.dto.PlanningRequestDto;
 import com.academicplanner.planning.dto.PlanningResponseDto;
 import lombok.extern.slf4j.Slf4j;
@@ -52,20 +53,6 @@ public class PythonPlanningClient {
         } catch (RestClientException ex) {
             log.error("Call to Python planning service failed", ex);
             throw new PlanningServiceUnavailableException("Unable to reach the Python planning service", ex);
-        }
-    }
-
-    /**
-     * Thrown when the Python planning service cannot be reached or fails
-     * unexpectedly.
-     */
-    public static class PlanningServiceUnavailableException extends RuntimeException {
-        public PlanningServiceUnavailableException(String message) {
-            super(message);
-        }
-
-        public PlanningServiceUnavailableException(String message, Throwable cause) {
-            super(message, cause);
         }
     }
 }

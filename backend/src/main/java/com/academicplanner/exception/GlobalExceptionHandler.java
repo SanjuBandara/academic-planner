@@ -1,5 +1,6 @@
 package com.academicplanner.exception;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,7 @@ import java.util.Map;
  * or internal database details to the frontend, and returns a consistent
  * JSON error shape (see ErrorResponse) with appropriate HTTP status codes.
  */
+@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
@@ -85,23 +87,35 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
     }
 
-    // 409 - Database constraint violation (e.g. FK integrity when deleting a referenced entity)
+    // 409 - Database constraint violation
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException ex) {
-        ErrorResponse body = ErrorResponse.of(
-                HttpStatus.CONFLICT.value(),
-                "Cannot complete this operation because related records exist. " +
-                "Delete or reassign those records first."
-        );
+        log.error("Database data integrity violation: ", ex);
+        String detailMessage = "Database constraint violation occurred.";
+        Throwable rootCause = ex.getMostSpecificCause();
+        if (rootCause != null && rootCause.getMessage() != null) {
+            String msg = rootCause.getMessage().toLowerCase();
+            if (msg.contains("foreign key") || msg.contains("violates foreign key constraint") || msg.contains("is still referenced")) {
+                detailMessage = "Cannot complete this operation because related records exist. Delete or reassign those records first.";
+            } else if (msg.contains("duplicate key") || msg.contains("unique constraint")) {
+                detailMessage = "A record with this information already exists.";
+            } else if (msg.contains("value too long")) {
+                detailMessage = "One of the input fields exceeds the maximum allowed length.";
+            } else {
+                detailMessage = "Database constraint violation: " + rootCause.getMessage();
+            }
+        }
+        ErrorResponse body = ErrorResponse.of(HttpStatus.CONFLICT.value(), detailMessage);
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
-    // 500 - Fallback for anything unexpected. Never leak internal details.
+    // 500 - Fallback for anything unexpected.
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleUnexpected(Exception ex) {
+        log.error("Unhandled exception: ", ex);
         ErrorResponse body = ErrorResponse.of(
                 HttpStatus.INTERNAL_SERVER_ERROR.value(),
-                "An unexpected error occurred. Please try again later."
+                ex.getMessage() != null && !ex.getMessage().isBlank() ? ex.getMessage() : "An unexpected error occurred. Please try again later."
         );
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }

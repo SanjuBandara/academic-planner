@@ -70,7 +70,7 @@ public class CpSatPlanningService {
             log.warn("[CpSatPlanningService] No time-slot availability found for user's plan {} — skipping solver call",
                     studyPlan.getId());
             return new CpSatPlanningResult(List.of(), 0.0, 0.0, 0.0, 0.0, 0.0, "FEASIBLE",
-                    List.of("No time-slot availability declared — provide start/end times per day, not just total hours, so the solver can place sessions."));
+                    List.of("No availability was declared for any day of this week — set at least one day's hours to a value greater than 0 to generate a plan."));
         }
 
         PlanningResponseDto response = pythonPlanningClient.generatePlan(request);
