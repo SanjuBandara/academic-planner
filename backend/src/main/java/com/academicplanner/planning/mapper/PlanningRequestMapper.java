@@ -96,7 +96,8 @@ public class PlanningRequestMapper {
                         credits,
                         a.getDueDateTime(),
                         workloadEstimator.remainingHoursFor(a),
-                        priorityMapper.priorityFor(a.getType())));
+                        priorityMapper.priorityFor(a.getType()),
+                        a.getWeight()));
             }
         }
 
@@ -114,7 +115,8 @@ public class PlanningRequestMapper {
                         credits,
                         t.getDueDateTime(),
                         workloadEstimator.remainingHoursFor(t),
-                        priorityMapper.priorityFor(t.getPriority())));
+                        priorityMapper.priorityFor(t.getPriority()),
+                        null));
             }
         }
 

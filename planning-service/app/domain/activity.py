@@ -25,6 +25,7 @@ class Activity:
     deadline: datetime | None
     remaining_hours: float
     priority: int = 3  # student/system-set priority, e.g. 1 (low) .. 5 (high)
+    weight: float | None = None
 
     def __post_init__(self):
         if self.remaining_hours < 0:

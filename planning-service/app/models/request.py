@@ -44,6 +44,7 @@ class ActivityIn(BaseModel):
     deadline: datetime | None = None
     remaining_hours: float = Field(alias="remainingHours")
     priority: int = 3
+    weight: float | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -59,6 +60,13 @@ class ActivityIn(BaseModel):
     def priority_in_range(cls, v: int) -> int:
         if not (1 <= v <= 5):
             raise ValueError("priority must be between 1 and 5")
+        return v
+
+    @field_validator("weight")
+    @classmethod
+    def weight_in_range(cls, v: float | None) -> float | None:
+        if v is not None and not 0 <= v <= 100:
+            raise ValueError("weight must be between 0 and 100")
         return v
 
 

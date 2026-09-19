@@ -21,6 +21,7 @@ public record ActivityDto(
                 Double credits, // nullable
                 LocalDateTime deadline, // nullable
                 double remainingHours,
-                int priority // 1 (low) .. 5 (high)
+                int priority, // 1 (low) .. 5 (high)
+                Double weight // nullable — assessment grade contribution percentage (0-100), null for tasks
 ) {
 }

@@ -41,6 +41,7 @@ def _to_domain_activities(request: PlanningRequest) -> list[Activity]:
             deadline=a.deadline,
             remaining_hours=a.remaining_hours,
             priority=a.priority,
+            weight=a.weight,
         )
         for a in request.activities
     ]
