@@ -119,11 +119,15 @@ export default function Planner() {
       const currentSlots = prev[day]?.timeSlots || [];
       const nextStart = currentSlots.length === 0 ? "09:00" : "14:00";
       const nextEnd = currentSlots.length === 0 ? "12:00" : "16:00";
+      const newSlots = [...currentSlots, { startTime: nextStart, endTime: nextEnd }];
+      const newSlotHours = calculateSlotHours(newSlots);
       return {
         ...prev,
         [day]: {
           ...prev[day],
-          timeSlots: [...currentSlots, { startTime: nextStart, endTime: nextEnd }],
+          timeSlots: newSlots,
+          // Auto-update hours to match the new total slot duration
+          hours: newSlotHours > 0 ? Math.round(newSlotHours * 10) / 10 : prev[day]?.hours ?? 4,
         },
       };
     });
@@ -133,11 +137,14 @@ export default function Planner() {
     setDailyState((prev) => {
       const slots = [...(prev[day]?.timeSlots || [])];
       slots[index] = { ...slots[index], [field]: value };
+      const newSlotHours = calculateSlotHours(slots);
       return {
         ...prev,
         [day]: {
           ...prev[day],
           timeSlots: slots,
+          // Sync hours to total slot duration whenever a slot time is changed
+          hours: newSlotHours > 0 ? Math.round(newSlotHours * 10) / 10 : prev[day]?.hours ?? 4,
         },
       };
     });
@@ -146,11 +153,14 @@ export default function Planner() {
   const handleRemoveSlot = (day: string, index: number) => {
     setDailyState((prev) => {
       const slots = (prev[day]?.timeSlots || []).filter((_, i) => i !== index);
+      const newSlotHours = calculateSlotHours(slots);
       return {
         ...prev,
         [day]: {
           ...prev[day],
           timeSlots: slots,
+          // When all slots removed, reset hours to 4; otherwise sync to remaining slot total
+          hours: slots.length === 0 ? 4 : newSlotHours > 0 ? Math.round(newSlotHours * 10) / 10 : prev[day]?.hours ?? 4,
         },
       };
     });
@@ -328,11 +338,11 @@ export default function Planner() {
                           </div>
                         ))}
 
-                        {slotHours !== state.hours && (
+                        {Math.abs(slotHours - state.hours) > 0.05 && (
                           <p className="text-[9px] text-amber-800 leading-tight">
                             {slotHours < state.hours
-                              ? `ℹ Declared ${state.hours}h, but slots provide ${slotHours}h windows.`
-                              : `ℹ Slots total ${slotHours}h. Planner caps at declared ${state.hours}h.`}
+                              ? `ℹ You set ${state.hours}h manually — slots cover ${slotHours}h. Planner will use slots only.`
+                              : `ℹ Slots total ${slotHours}h. You set ${state.hours}h — planner will cap at ${state.hours}h.`}
                           </p>
                         )}
                       </div>
