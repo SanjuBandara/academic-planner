@@ -28,15 +28,15 @@ from dataclasses import dataclass, field
 class TimeGranularity:
     """CP-SAT reasons about discrete time slots, not continuous minutes."""
 
-    slot_minutes: int = 15  # spec Section 4: 15-minute scheduling units
+    slot_minutes: int = 30  # 30-minute scheduling units
 
 
 @dataclass(frozen=True)
 class SessionPreferences:
     """Soft preferences about how sessions should look (spec Section 9, Objective 5)."""
 
-    preferred_lengths_minutes: tuple[int, ...] = (30, 45, 60, 90, 120)
-    min_session_minutes: int = 15
+    preferred_lengths_minutes: tuple[int, ...] = (30, 60, 90, 120)
+    min_session_minutes: int = 30
     max_session_minutes: int = 150
 
 
@@ -54,7 +54,8 @@ class LexicographicWeights:
     priority: int = 10_000                  # Objective 3
     credits: int = 100                      # Objective 4
     contiguity: int = 10                    # Objective 5
-    context_switching: int = 1              # Objective 6
+    daily_spread: int = 5                   # Objective 6 — distribute work across days
+    context_switching: int = 1              # Objective 7
 
 
 @dataclass(frozen=True)

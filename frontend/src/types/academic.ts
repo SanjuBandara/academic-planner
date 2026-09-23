@@ -131,6 +131,26 @@ export interface StudyPlanItem {
   notes?: string;
 }
 
+export interface TodaysSessionSummary {
+  id: number;
+  sourceId: string | null;
+  title: string;
+  activityType: string;
+  moduleCode: string | null;
+  moduleName: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  durationMinutes: number;
+  status: ItemStatus;
+}
+
+export interface TodaysSchedule {
+  date: string;
+  totalPlannedMinutes: number;
+  totalPlannedHours: number;
+  sessions: TodaysSessionSummary[];
+}
+
 export interface StudyPlan {
   id: number;
   type: 'WEEKLY' | 'MONTHLY';

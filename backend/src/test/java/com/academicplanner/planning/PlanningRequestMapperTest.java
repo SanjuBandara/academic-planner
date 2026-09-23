@@ -78,10 +78,13 @@ class PlanningRequestMapperTest {
         PlanningRequestDto request = mapper.toRequest(
                 LocalDate.of(2026, 9, 20),
                 LocalDate.of(2026, 9, 26),
+                LocalDateTime.of(2026, 9, 20, 10, 0),
                 List.of(examWithWeight, quizWithoutWeight),
                 List.of(task),
                 Collections.emptyMap()
         );
+
+        assertThat(request.currentDateTime()).isEqualTo(LocalDateTime.of(2026, 9, 20, 10, 0));
 
         List<ActivityDto> activities = request.activities();
         assertThat(activities).hasSize(3);

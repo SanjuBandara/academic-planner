@@ -40,6 +40,31 @@ export default function Planner() {
     SUNDAY: { hours: 6, timeSlots: [] },
   });
 
+  const rollingDays = useMemo(() => {
+    const base = startDate ? new Date(startDate + "T00:00:00") : new Date();
+    const todayStr = new Date().toISOString().split("T")[0];
+    const tmr = new Date();
+    tmr.setDate(tmr.getDate() + 1);
+    const tmrStr = tmr.toISOString().split("T")[0];
+
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(base);
+      d.setDate(base.getDate() + i);
+      const dayName = d.toLocaleDateString("en-US", { weekday: "long" }).toUpperCase();
+      const dateStr = d.toISOString().split("T")[0];
+      const isToday = dateStr === todayStr;
+      const isTomorrow = dateStr === tmrStr;
+      return {
+        dayIndex: i + 1,
+        dayName,
+        dateStr,
+        formattedShort: d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" }),
+        isToday,
+        isTomorrow,
+      };
+    });
+  }, [startDate]);
+
   const { data: activePlan, isLoading: loadingPlan } = useQuery({
     queryKey: ["active-study-plan"],
     queryFn: studyPlanApi.getActivePlan,
@@ -206,31 +231,52 @@ export default function Planner() {
 
           {/* Daily Availability Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-7 gap-4">
-            {daysOfWeek.map((day) => {
-              const state = dailyState[day] || { hours: 4, timeSlots: [] };
+            {rollingDays.map(({ dayIndex, dayName, formattedShort, isToday, isTomorrow }) => {
+              const state = dailyState[dayName] || { hours: 4, timeSlots: [] };
               const slotHours = calculateSlotHours(state.timeSlots);
               const hasSlots = state.timeSlots.length > 0;
 
               return (
                 <div
-                  key={day}
+                  key={dayName}
                   className={`p-4 rounded-xl border transition flex flex-col justify-between space-y-3 ${
-                    hasSlots
-                      ? "bg-amber-50/40 border-gold/50 shadow-sm"
+                    isToday
+                      ? "bg-amber-50/70 border-gold shadow-sm ring-1 ring-gold/40"
+                      : hasSlots
+                      ? "bg-amber-50/30 border-gold/40 shadow-sm"
                       : "bg-paper/50 border-hairline hover:border-slate-300"
                   }`}
                 >
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-mono font-bold text-ink uppercase tracking-wider">
-                        {day.slice(0, 3)}
-                      </span>
-                      {hasSlots && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gold text-ink">
-                          {state.timeSlots.length} slot{state.timeSlots.length > 1 ? "s" : ""}
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-mono font-bold text-ink uppercase tracking-wider">
+                          {dayName.slice(0, 3)}
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          {formattedShort}
+                        </span>
+                      </div>
+                      {isToday ? (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-ink text-gold">
+                          ⚡ TODAY
+                        </span>
+                      ) : isTomorrow ? (
+                        <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
+                          Tomorrow
+                        </span>
+                      ) : (
+                        <span className="text-[9px] font-mono text-slate-400">
+                          Day {dayIndex}
                         </span>
                       )}
                     </div>
+
+                    {isToday && (
+                      <p className="text-[9px] text-amber-900 bg-amber-100/70 px-1.5 py-0.5 rounded leading-tight">
+                        ⏱️ Starts from now (past hours skipped)
+                      </p>
+                    )}
 
                     {/* Required Daily Hours */}
                     <div>
@@ -244,7 +290,7 @@ export default function Planner() {
                           max="24"
                           step="0.5"
                           value={state.hours}
-                          onChange={(e) => handleHourChange(day, parseFloat(e.target.value) || 0)}
+                          onChange={(e) => handleHourChange(dayName, parseFloat(e.target.value) || 0)}
                           className="w-full text-center font-bold text-ink text-base bg-white border border-hairline rounded-lg py-1.5 outline-none focus:border-gold"
                         />
                         <span className="text-xs font-semibold text-slate-500">h</span>
@@ -264,19 +310,19 @@ export default function Planner() {
                             <input
                               type="time"
                               value={slot.startTime}
-                              onChange={(e) => handleSlotChange(day, idx, "startTime", e.target.value)}
+                              onChange={(e) => handleSlotChange(dayName, idx, "startTime", e.target.value)}
                               className="w-16 text-[11px] font-mono p-0.5 border border-hairline rounded text-center outline-none"
                             />
                             <span className="text-slate-400">→</span>
                             <input
                               type="time"
                               value={slot.endTime}
-                              onChange={(e) => handleSlotChange(day, idx, "endTime", e.target.value)}
+                              onChange={(e) => handleSlotChange(dayName, idx, "endTime", e.target.value)}
                               className="w-16 text-[11px] font-mono p-0.5 border border-hairline rounded text-center outline-none"
                             />
                             <button
                               type="button"
-                              onClick={() => handleRemoveSlot(day, idx)}
+                              onClick={() => handleRemoveSlot(dayName, idx)}
                               className="text-red-500 hover:text-red-700 p-0.5 text-xs ml-auto"
                               title="Remove slot"
                             >
@@ -300,7 +346,7 @@ export default function Planner() {
                   <div className="pt-2 border-t border-hairline/40">
                     <button
                       type="button"
-                      onClick={() => handleAddTimeSlot(day)}
+                      onClick={() => handleAddTimeSlot(dayName)}
                       className="w-full py-1 text-[11px] font-semibold text-gold-dark hover:text-ink hover:bg-gold/20 rounded transition flex items-center justify-center gap-1"
                     >
                       <span>+</span>

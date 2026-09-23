@@ -72,6 +72,7 @@ class ActivityIn(BaseModel):
 
 class PlanningRequest(BaseModel):
     planning_period: PlanningPeriodIn = Field(alias="planningPeriod")
+    current_date_time: datetime | None = Field(default=None, alias="currentDateTime")
     availability: list[AvailabilityWindowIn] = Field(default_factory=list)
     activities: list[ActivityIn] = Field(default_factory=list)
 

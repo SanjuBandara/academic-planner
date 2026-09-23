@@ -13,6 +13,7 @@ import com.academicplanner.planning.model.TimeSlot;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -43,11 +44,13 @@ public class PlanningRequestMapper {
 
     public PlanningRequestDto toRequest(LocalDate startDate,
             LocalDate endDate,
+            LocalDateTime currentDateTime,
             List<Assessment> assessments,
             List<Task> tasks,
             Map<LocalDate, DailyAvailability> dailyAvailability) {
         return new PlanningRequestDto(
                 new PlanningPeriodDto(startDate, endDate),
+                currentDateTime,
                 toAvailability(dailyAvailability),
                 toActivities(assessments, tasks));
     }

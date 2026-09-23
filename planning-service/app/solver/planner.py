@@ -9,6 +9,8 @@ Orchestrates a single planning run (spec Section 15):
 """
 from __future__ import annotations
 
+from datetime import datetime as _dt, time as _time
+
 from ortools.sat.python import cp_model
 
 from app.config import PlanningConfig, DEFAULT_CONFIG
@@ -48,10 +50,60 @@ def _to_domain_activities(request: PlanningRequest) -> list[Activity]:
 
 
 def _to_domain_availability(request: PlanningRequest) -> list[AvailabilityWindow]:
-    windows = []
+    """
+    Converts the raw availability windows in the request to domain objects,
+    applying two filters:
+
+    1.  Period filter: only windows whose date falls inside [startDate, endDate]
+        are kept.
+    2.  Current-time trimming: if ``currentDateTime`` is provided, windows on
+        the current day that have already (partly or fully) elapsed are trimmed
+        or dropped so the solver never schedules study into the past.
+
+        Rules (where ``current_date`` = currentDateTime.date() and
+               ``current_time`` = currentDateTime.time()):
+        - window.date < current_date           -> drop (whole day in the past)
+        - window.date == current_date:
+            - window.end_time   <= current_time -> drop (window fully elapsed)
+            - window.start_time <  current_time -> trim start to current_time
+            - otherwise                         -> keep unchanged
+        - window.date > current_date           -> keep unchanged
+    """
+    period_start = request.planning_period.start_date
+    period_end = request.planning_period.end_date
+
+    current_date = None
+    current_time = None
+    if request.current_date_time is not None:
+        current_date = request.current_date_time.date()
+        current_time = request.current_date_time.time().replace(second=0, microsecond=0)
+
+    windows: list[AvailabilityWindow] = []
     for w in request.availability:
-        if request.planning_period.start_date <= w.date <= request.planning_period.end_date:
-            windows.append(AvailabilityWindow(date=w.date, start_time=w.start_time, end_time=w.end_time))
+        if not (period_start <= w.date <= period_end):
+            continue
+
+        start_time = w.start_time
+        end_time = w.end_time
+
+        if current_date is not None:
+            if w.date < current_date:
+                # Entire day is in the past — skip
+                continue
+            elif w.date == current_date:
+                if end_time <= current_time:
+                    # Window completely elapsed — skip
+                    continue
+                elif start_time < current_time:
+                    # Window partially elapsed — trim start to now
+                    start_time = current_time
+
+        # Defensive: skip zero-length windows produced by trimming
+        if start_time >= end_time:
+            continue
+
+        windows.append(AvailabilityWindow(date=w.date, start_time=start_time, end_time=end_time))
+
     return windows
 
 

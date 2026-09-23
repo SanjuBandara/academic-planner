@@ -12,7 +12,7 @@ nothing here computes minutes-per-slot itself (spec Section 4).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from ortools.sat.python import cp_model
 
@@ -87,17 +87,15 @@ def build_assignment_variables(
             # Completed-activity constraint (Section 8): no variables at all.
             continue
 
-        deadline_slot = (
-            datetime_to_absolute_slot(activity.deadline, period_start, slot_minutes)
-            if activity.deadline is not None
-            else None
-        )
-
         for slot in slots:
-            if deadline_slot is not None and slot.index > deadline_slot:
-                # Deadline constraint (Section 8-D): slot starts after the
-                # deadline -> not a legal candidate for this activity.
-                continue
+            # Deadline constraint (Part 3 fix): the ENTIRE slot must finish
+            # on or before the deadline.  We compare the slot's end datetime
+            # to the deadline datetime so that a session can never extend
+            # past the deadline boundary.
+            if activity.deadline is not None:
+                slot_end_dt = datetime.combine(slot.date, slot.end_time)
+                if slot_end_dt > activity.deadline:
+                    continue
 
             var = model.NewBoolVar(f"x_{activity.id}_{slot.index}")
             x[(activity.id, slot.index)] = var

@@ -127,6 +127,30 @@ def build_objective_terms(
             model.Add(continue_var >= prev_var + curr_var - 1)
             terms.append(continue_var * weights.context_switching)
 
+    # ---- Tier 6 (distribution): daily-spread incentive.
+    # For each calendar day that has at least one slot assigned to any
+    # activity, reward the solution with ``daily_spread`` points.
+    # This softly encourages the solver to spread workload across the
+    # available days rather than cramming everything into the first day(s).
+    # No fake work is created — the reward only fires when a real activity
+    # slot is scheduled on that day.
+    from collections import defaultdict
+    day_vars: dict = defaultdict(list)
+    for (activity_id, slot_index), var in assignment.x.items():
+        slot = next((s for s in assignment.slots if s.index == slot_index), None)
+        if slot is not None:
+            day_vars[slot.date].append(var)
+
+    for day, day_slot_vars in day_vars.items():
+        if not day_slot_vars:
+            continue
+        day_active = model.NewBoolVar(f"day_active_{day}")
+        # day_active = 1 iff at least one slot on this day is assigned.
+        # Linearization: day_active <= sum(vars), day_active * N >= sum(vars)
+        model.Add(sum(day_slot_vars) >= day_active)
+        model.Add(day_active * len(day_slot_vars) >= sum(day_slot_vars))
+        terms.append(day_active * weights.daily_spread)
+
     return terms
 
 

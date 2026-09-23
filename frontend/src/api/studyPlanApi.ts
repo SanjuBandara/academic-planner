@@ -1,5 +1,5 @@
 import apiClient from "./client";
-import { ItemStatus, StudyPlan, StudyPlanItem, WeeklyPlanRequest } from "../types/academic";
+import { ItemStatus, StudyPlan, StudyPlanItem, WeeklyPlanRequest, TodaysSchedule } from "../types/academic";
 
 export const studyPlanApi = {
   generateWeeklyPlan: async (request: WeeklyPlanRequest): Promise<StudyPlan> => {
@@ -12,8 +12,8 @@ export const studyPlanApi = {
     return res.data;
   },
 
-  getTodaysItems: async (): Promise<StudyPlanItem[]> => {
-    const res = await apiClient.get<StudyPlanItem[]>("/api/study-plans/today");
+  getTodaysSchedule: async (): Promise<TodaysSchedule> => {
+    const res = await apiClient.get<TodaysSchedule>("/api/study-plans/today");
     return res.data;
   },
 

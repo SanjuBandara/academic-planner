@@ -42,9 +42,9 @@ public class StudyPlanController {
     }
 
     @GetMapping("/today")
-    public ResponseEntity<List<StudyPlanItemResponse>> getTodaysItems(Authentication authentication) {
+    public ResponseEntity<TodaysScheduleResponse> getTodaysSchedule(Authentication authentication) {
         User user = getCurrentUser(authentication);
-        return ResponseEntity.ok(studyPlanService.getTodaysItems(user));
+        return ResponseEntity.ok(studyPlanService.getTodaysSchedule(user));
     }
 
     @PatchMapping("/items/{itemId}/status")

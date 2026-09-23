@@ -18,6 +18,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 
@@ -34,12 +37,24 @@ public class StudyPlanService {
 
     @Transactional
     public StudyPlanResponse generateWeeklyPlan(WeeklyPlanRequest request, User user) {
-        LocalDate startDate = request.startDate();
+        // Part 1: Planning period always starts from today (the current server date)
+        // and spans exactly 7 days. The startDate from the request is ignored.
+        LocalDateTime currentDateTime = LocalDateTime.now();
+        LocalDate startDate = currentDateTime.toLocalDate();
         LocalDate endDate = startDate.plusDays(6);
 
-        // Cancel previous active weekly plan if any
+        log.info("[StudyPlanService] Generating plan for user {} | period {} to {} | currentTime {}",
+                user.getId(), startDate, endDate, currentDateTime);
+
+        // Cancel previous active weekly plan if any (prevents duplicates)
         studyPlanRepository.findByUserAndTypeAndStatus(user, PlanType.WEEKLY, PlanStatus.ACTIVE)
-                .ifPresent(p -> p.setStatus(PlanStatus.CANCELLED));
+                .ifPresent(p -> {
+                    // Delete old items first to avoid orphan rows
+                    studyPlanItemRepository.deleteAll(
+                            studyPlanItemRepository.findAllByStudyPlan_IdOrderByDateAscStartTimeAsc(p.getId()));
+                    p.setStatus(PlanStatus.CANCELLED);
+                    studyPlanRepository.save(p);
+                });
 
         // Build DailyAvailability map per day
         Map<LocalDate, com.academicplanner.planning.model.DailyAvailability> dailyAvailMap = new java.util.LinkedHashMap<>();
@@ -48,7 +63,7 @@ public class StudyPlanService {
             LocalDate date = startDate.plusDays(i);
             String dayName = date.getDayOfWeek().name();
 
-            Double hours = 4.0; // default fallback
+            Double hours = 0.0; // default 0 if no availability declared
             List<com.academicplanner.planning.model.TimeSlot> timeSlots = new java.util.ArrayList<>();
 
             if (request.dailyAvailability() != null && request.dailyAvailability().containsKey(dayName)) {
@@ -87,10 +102,8 @@ public class StudyPlanService {
         List<Task> tasks = taskRepository.findActivePlanningTasks(user.getId());
 
         // ======= CP-SAT CUTOVER =======
-        // Replaces: planningEngine.generatePlanWithAvailability(studyPlan, assessments,
-        // tasks, dailyAvailMap, LocalDateTime.now());
         CpSatPlanningResult result = cpSatPlanningService.generatePlan(
-                studyPlan, startDate, endDate, assessments, tasks, dailyAvailMap);
+                studyPlan, startDate, endDate, currentDateTime, assessments, tasks, dailyAvailMap);
         // ===============================
 
         // Log warnings if any
@@ -106,7 +119,6 @@ public class StudyPlanService {
         studyPlanRepository.save(studyPlan);
 
         // Forward solver status and any scheduling warnings to the response
-        // so the frontend can display e.g. INFEASIBLE banners or partial-schedule notices.
         return StudyPlanResponse.from(studyPlan, result.solverStatus(), result.warnings());
     }
 
@@ -142,6 +154,40 @@ public class StudyPlanService {
                 .stream()
                 .map(StudyPlanItemResponse::from)
                 .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public TodaysScheduleResponse getTodaysSchedule(User user) {
+        LocalDate today = LocalDate.now();
+        List<StudyPlanItem> items = studyPlanItemRepository.findTodaysItems(user.getId(), today);
+        int totalMinutes = items.stream()
+                .mapToInt(item -> {
+                    if (item.getStartTime() != null && item.getEndTime() != null) {
+                        return (int) java.time.Duration.between(item.getStartTime(), item.getEndTime()).toMinutes();
+                    }
+                    return (int) (item.getPlannedHours() * 60);
+                })
+                .sum();
+        List<TodaysScheduleResponse.SessionSummary> sessions = items.stream()
+                .map(item -> new TodaysScheduleResponse.SessionSummary(
+                        item.getId(),
+                        item.getTask() != null ? "T-" + item.getTask().getId()
+                                : item.getAssessment() != null ? "A-" + item.getAssessment().getId() : null,
+                        item.getActivityLabel() != null ? item.getActivityLabel()
+                                : item.getTask() != null ? item.getTask().getTitle()
+                                : item.getAssessment() != null ? item.getAssessment().getTitle() : "Study Session",
+                        item.getActivityType(),
+                        item.getModule() != null ? item.getModule().getCode() : null,
+                        item.getModule() != null ? item.getModule().getName() : null,
+                        item.getStartTime() != null ? item.getStartTime().format(DateTimeFormatter.ofPattern("HH:mm")) : null,
+                        item.getEndTime() != null ? item.getEndTime().format(DateTimeFormatter.ofPattern("HH:mm")) : null,
+                        item.getStartTime() != null && item.getEndTime() != null
+                                ? (int) java.time.Duration.between(item.getStartTime(), item.getEndTime()).toMinutes()
+                                : (int) (item.getPlannedHours() * 60),
+                        item.getStatus().name()
+                ))
+                .toList();
+        return new TodaysScheduleResponse(today, totalMinutes, (double) totalMinutes / 60.0, sessions);
     }
 
     @Transactional(readOnly = true)

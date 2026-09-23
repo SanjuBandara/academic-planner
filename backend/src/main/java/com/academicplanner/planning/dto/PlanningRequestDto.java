@@ -1,5 +1,6 @@
 package com.academicplanner.planning.dto;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -8,6 +9,7 @@ import java.util.List;
  */
 public record PlanningRequestDto(
                 PlanningPeriodDto planningPeriod,
+                LocalDateTime currentDateTime,
                 List<AvailabilityWindowDto> availability,
                 List<ActivityDto> activities) {
 }

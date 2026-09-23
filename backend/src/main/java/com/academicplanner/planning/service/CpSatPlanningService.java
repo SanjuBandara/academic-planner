@@ -15,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -60,11 +61,12 @@ public class CpSatPlanningService {
     public CpSatPlanningResult generatePlan(StudyPlan studyPlan,
             LocalDate startDate,
             LocalDate endDate,
+            LocalDateTime currentDateTime,
             List<Assessment> assessments,
             List<Task> tasks,
             Map<LocalDate, DailyAvailability> dailyAvailability) {
 
-        PlanningRequestDto request = requestMapper.toRequest(startDate, endDate, assessments, tasks, dailyAvailability);
+        PlanningRequestDto request = requestMapper.toRequest(startDate, endDate, currentDateTime, assessments, tasks, dailyAvailability);
 
         if (request.availability().isEmpty()) {
             log.warn("[CpSatPlanningService] No time-slot availability found for user's plan {} — skipping solver call",
