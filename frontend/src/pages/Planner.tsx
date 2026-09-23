@@ -4,6 +4,8 @@ import Layout from "../components/Layout";
 import { studyPlanApi } from "../api/studyPlanApi";
 import { ItemStatus, StudyPlan, TimeSlot, WeeklyPlanRequest } from "../types/academic";
 
+import { formatLocalDate, parseLocalDate, addDays } from "../utils/dateUtils";
+
 interface DayAvailabilityState {
   hours: number;
   timeSlots: TimeSlot[];
@@ -23,9 +25,7 @@ export default function Planner() {
     "SUNDAY",
   ];
 
-  const [startDate, setStartDate] = useState<string>(
-    new Date().toISOString().split("T")[0]
-  );
+  const [startDate, setStartDate] = useState<string>(formatLocalDate());
 
   const [activeTab, setActiveTab] = useState<"TABLE" | "CARDS">("TABLE");
 
@@ -41,17 +41,14 @@ export default function Planner() {
   });
 
   const rollingDays = useMemo(() => {
-    const base = startDate ? new Date(startDate + "T00:00:00") : new Date();
-    const todayStr = new Date().toISOString().split("T")[0];
-    const tmr = new Date();
-    tmr.setDate(tmr.getDate() + 1);
-    const tmrStr = tmr.toISOString().split("T")[0];
+    const base = startDate ? parseLocalDate(startDate) : new Date();
+    const todayStr = formatLocalDate(new Date());
+    const tmrStr = formatLocalDate(addDays(new Date(), 1));
 
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(base);
-      d.setDate(base.getDate() + i);
+      const d = addDays(base, i);
       const dayName = d.toLocaleDateString("en-US", { weekday: "long" }).toUpperCase();
-      const dateStr = d.toISOString().split("T")[0];
+      const dateStr = formatLocalDate(d);
       const isToday = dateStr === todayStr;
       const isTomorrow = dateStr === tmrStr;
       return {

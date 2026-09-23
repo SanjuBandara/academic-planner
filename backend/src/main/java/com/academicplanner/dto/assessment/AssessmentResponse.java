@@ -4,6 +4,7 @@ import com.academicplanner.entity.Assessment;
 import com.academicplanner.entity.Assessment.AssessmentStatus;
 import com.academicplanner.entity.Assessment.AssessmentType;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 
@@ -43,7 +44,9 @@ public record AssessmentResponse(
     public static AssessmentResponse from(Assessment assessment) {
         Long daysUntil = null;
         if (assessment.getDueDateTime() != null) {
-            daysUntil = ChronoUnit.DAYS.between(LocalDateTime.now(), assessment.getDueDateTime());
+            LocalDate today = LocalDate.now();
+            LocalDate dueDate = assessment.getDueDateTime().toLocalDate();
+            daysUntil = ChronoUnit.DAYS.between(today, dueDate);
         }
         return new AssessmentResponse(
                 assessment.getId(),

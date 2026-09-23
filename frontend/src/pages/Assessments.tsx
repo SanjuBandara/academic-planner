@@ -385,8 +385,9 @@ export default function Assessments() {
                   const statMeta = STATUS_META[a.status] ?? STATUS_META.PENDING;
                   const due = a.dueDateTime ? fmtDue(a.dueDateTime) : null;
                   const days = a.daysUntilDeadline;
-                  const overdue = days !== undefined && days !== null && days < 0;
-                  const soon = days !== undefined && days !== null && days >= 0 && days <= 3;
+                  const isPast = a.dueDateTime ? new Date(a.dueDateTime).getTime() < Date.now() : false;
+                  const overdue = isPast || (days !== undefined && days !== null && days < 0);
+                  const soon = !overdue && days !== undefined && days !== null && days >= 0 && days <= 3;
                   const basePri = a.calculatedBasePriority ?? typeMeta.basePriority;
 
                   return (
@@ -440,10 +441,14 @@ export default function Assessments() {
                           overdue ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"
                         }`}>
                           {overdue
-                            ? `⚠️ Overdue by ${Math.abs(days!)} day${Math.abs(days!) !== 1 ? "s" : ""}`
+                            ? days !== undefined && days !== null && days < 0
+                              ? `⚠️ Overdue by ${Math.abs(days)} day${Math.abs(days) !== 1 ? "s" : ""}`
+                              : "⚠️ Overdue (deadline passed)"
                             : days === 0
                             ? "🔥 Due today!"
-                            : `⏳ Due in ${days} day${days !== 1 ? "s" : ""}`}
+                            : days === 1
+                            ? "⏳ Due tomorrow!"
+                            : `⏳ Due in ${days} days`}
                         </div>
                       )}
 
