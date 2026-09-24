@@ -34,6 +34,12 @@ public class AiToolService {
     private final TaskTool taskTool;
     private final AvailabilityTool availabilityTool;
     private final PlanningTool planningTool;
+    private final MarkCompletedTool markCompletedTool;
+
+    // ── Phase 4 ──────────────────────────────────────────────────────────────
+    private final QuickAddTool quickAddTool;
+    private final SkipTodayTool skipTodayTool;
+    private final BurnoutDetectorTool burnoutDetectorTool;
 
     public TodaysScheduleResponse getTodayPlan(User user) {
         return studyPlanTool.getTodayPlan(user);
@@ -55,11 +61,21 @@ public class AiToolService {
         return taskTool.getTasks(user);
     }
 
+    public List<TaskResponse> getPendingTasks(User user) {
+        return taskTool.getTasks(user).stream()
+                .filter(t -> !"COMPLETED".equals(t.status() != null ? t.status().name() : ""))
+                .toList();
+    }
+
     public Optional<StudyAvailability> getTodayAvailability(User user) {
         return availabilityTool.getTodayAvailability(user);
     }
 
     public List<StudyAvailability> getWeeklyAvailability(User user) {
+        return availabilityTool.getWeeklyAvailability(user);
+    }
+
+    public List<StudyAvailability> getAvailability(User user) {
         return availabilityTool.getWeeklyAvailability(user);
     }
 
@@ -74,4 +90,33 @@ public class AiToolService {
     public void cancelProposal(String proposalId, User user) {
         planningTool.cancelProposal(proposalId, user);
     }
+
+    // ── Phase 2: Mark Completed ──────────────────────────────────────────────
+
+    public boolean markItemCompleted(Long itemId, User user) {
+        return markCompletedTool.markItemCompleted(itemId, user);
+    }
+
+    public String markByTitleFragment(String titleFragment, User user) {
+        return markCompletedTool.markByTitleFragment(titleFragment, user);
+    }
+
+    // ── Phase 4: Quick-Add Task ───────────────────────────────────────────────
+
+    public com.academicplanner.dto.task.TaskResponse quickAddTask(String message, User user) {
+        return quickAddTool.quickAddTask(message, user);
+    }
+
+    // ── Phase 4: Skip Today ───────────────────────────────────────────────────
+
+    public int skipAllTodaySessions(User user) {
+        return skipTodayTool.skipAllTodaySessions(user);
+    }
+
+    // ── Phase 4: Burnout Detection ────────────────────────────────────────────
+
+    public BurnoutDetectorTool.BurnoutReport analyseBurnout(User user) {
+        return burnoutDetectorTool.analyse(user);
+    }
 }
+

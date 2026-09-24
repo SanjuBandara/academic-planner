@@ -20,6 +20,11 @@ const INTENT_COLORS: Record<string, string> = {
   REPLAN: "bg-purple-100 text-purple-700",
   CREATE_DAILY_PLAN: "bg-cyan-100 text-cyan-700",
   GENERAL_PLAN_QUESTION: "bg-slate-100 text-slate-600",
+  // Phase 4
+  QUICK_ADD_TASK: "bg-green-100 text-green-700",
+  SKIP_TODAY: "bg-slate-200 text-slate-600",
+  BURNOUT_CHECK: "bg-rose-100 text-rose-700",
+  STUDY_BREAKDOWN: "bg-violet-100 text-violet-700",
 };
 
 /**

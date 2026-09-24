@@ -9,9 +9,11 @@ const QUICK_PROMPTS = [
   "What do I have to study today?",
   "Show my upcoming assessments",
   "I finished my last session",
-  "I'm behind schedule — what should I do?",
-  "How much study time do I have remaining?",
-  "Show my pending tasks",
+  "I'm sick, skip today's sessions",
+  "How am I doing? Show my progress",
+  "Add a task due next Friday, 2 hours",
+  "How should I study for my exam?",
+  "What should I focus on most?",
 ];
 
 

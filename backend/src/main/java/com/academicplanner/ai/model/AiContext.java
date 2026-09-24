@@ -41,6 +41,9 @@ public class AiContext {
     @Builder.Default
     private List<AvailabilitySummary> availability = new ArrayList<>();
 
+    @Builder.Default
+    private List<com.academicplanner.entity.AiChatHistory> recentChatMessages = new ArrayList<>();
+
     @Data
     @Builder
     @NoArgsConstructor

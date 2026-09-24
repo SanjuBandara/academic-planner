@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { aiAssistantApi } from "../../api/aiAssistantApi";
 import { ChatMessage } from "../../types/ai";
 import { AiMessage } from "./AiMessage";
@@ -35,7 +35,7 @@ export const AiAssistant: React.FC = () => {
         {
           id: "initial-welcome",
           sender: "assistant",
-          text: "Hello! I'm your **AI Planning Assistant**. Here's what I can help you with:\n\n• **Today's Plan** — Ask what you have to study\n• **Mark Sessions Done** — Say \"I finished my DSA session\"\n• **Assessments & Tasks** — Check upcoming deadlines\n• **Replanning Guidance** — \"I'm behind schedule — what should I do?\"\n\nType **help** for a full list of capabilities. What would you like help with?",
+          text: "Hello! I'm your **AI Planning Assistant**. Here's what I can help you with:\n\n• **Today's Plan** — Ask what you have to study\n• **Mark Sessions Done** — \"I finished my DSA session\"\n• **Skip Day** — \"I'm sick, skip today's sessions\"\n• **Quick-Add Tasks** — \"Add a CS101 essay due next Friday, 3 hours\"\n• **Study Breakdown** — \"How should I study for my exam?\"\n• **Progress Check** — \"How am I doing?\" to see your consistency report\n• **Prioritise** — \"What should I focus on most?\"\n\nWhat would you like help with?",
           timestamp: "Just now",
           intent: "GENERAL_PLAN_QUESTION",
         },
@@ -67,10 +67,14 @@ export const AiAssistant: React.FC = () => {
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, assistantMsg]);
-      // If the AI marked a session completed, refresh dashboard data
-      if (data.intent === "MARK_ACTIVITY_COMPLETED") {
+      // Refresh dashboard data based on what the AI just did
+      if (data.intent === "MARK_ACTIVITY_COMPLETED" || data.intent === "SKIP_TODAY") {
         queryClient.invalidateQueries({ queryKey: ["todays-schedule"] });
         queryClient.invalidateQueries({ queryKey: ["active-study-plan"] });
+        queryClient.invalidateQueries({ queryKey: ["ai-daily-hint"] });
+      }
+      if (data.intent === "QUICK_ADD_TASK") {
+        queryClient.invalidateQueries({ queryKey: ["tasks"] });
       }
     },
     onError: (err: any) => {
@@ -141,7 +145,7 @@ export const AiAssistant: React.FC = () => {
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-hairline shadow-sm overflow-hidden flex flex-col h-[520px]">
+    <div className="bg-white rounded-2xl border border-hairline shadow-sm overflow-hidden flex flex-col h-full">
       {/* Header */}
       <div className="p-4 border-b border-hairline bg-gradient-to-r from-ink/5 via-paper to-ink/5 flex items-center justify-between">
         <div className="flex items-center space-x-3">

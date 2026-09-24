@@ -63,4 +63,25 @@ public class AiAssistantController {
         AiActionResponse response = aiAssistantService.confirmAction(request, user);
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * Retrieves the chat history for the authenticated student.
+     */
+    @org.springframework.web.bind.annotation.GetMapping("/history")
+    public ResponseEntity<com.academicplanner.ai.dto.AiChatHistoryResponse> getChatHistory(Authentication authentication) {
+        User user = getCurrentUser(authentication);
+        log.info("[AiAssistantController] Fetching chat history for student: {}", user.getEmail());
+        com.academicplanner.ai.dto.AiChatHistoryResponse response = aiAssistantService.getChatHistory(user);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Generates a dynamic daily hint based on the student's plan.
+     */
+    @org.springframework.web.bind.annotation.GetMapping("/daily-hint")
+    public ResponseEntity<java.util.Map<String, String>> getDailyHint(Authentication authentication) {
+        User user = getCurrentUser(authentication);
+        String hint = aiAssistantService.generateDailyHint(user);
+        return ResponseEntity.ok(java.util.Map.of("hint", hint));
+    }
 }

@@ -1,12 +1,15 @@
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useCurrentUser, useLogout } from "../hooks/useAuth";
+import { AiAssistant } from "./ai/AiAssistant";
 
 interface LayoutProps {
   children: ReactNode;
 }
 
 export default function Layout({ children }: LayoutProps) {
+  const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
+  
   const { data: user } = useCurrentUser();
   const logoutMutation = useLogout();
   const location = useLocation();
@@ -89,6 +92,46 @@ export default function Layout({ children }: LayoutProps) {
       <footer className="border-t border-hairline py-4 bg-white/50 text-center text-xs text-slate-500">
         Academic Workload & Adaptive Study Planning System • Java 21 & React
       </footer>
+
+      {/* Floating Action Button for AI Assistant */}
+      <button
+        onClick={() => setIsAiAssistantOpen(true)}
+        className="fixed bottom-6 right-6 w-14 h-14 bg-ink hover:bg-ink-light text-gold rounded-full shadow-2xl flex items-center justify-center text-2xl transition-transform hover:scale-105 z-40"
+        title="Open AI Assistant"
+      >
+        ✨
+      </button>
+
+      {/* AI Assistant Right Sidebar Overlay */}
+      {isAiAssistantOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-ink/30 backdrop-blur-sm transition-opacity"
+            onClick={() => setIsAiAssistantOpen(false)}
+          ></div>
+          
+          {/* Sidebar Drawer */}
+          <div className="relative w-full max-w-sm md:max-w-md h-full bg-white shadow-2xl flex flex-col animate-slide-in-right">
+            {/* Close Button Header */}
+            <div className="flex items-center justify-between p-3 border-b border-hairline bg-slate-50">
+              <span className="font-serif font-bold text-ink">AI Assistant</span>
+              <button
+                onClick={() => setIsAiAssistantOpen(false)}
+                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-200 text-slate-500 transition"
+                title="Close AI Assistant"
+              >
+                ✖
+              </button>
+            </div>
+            
+            {/* AI Assistant Component container */}
+            <div className="flex-1 overflow-hidden [&>div]:h-full [&>div]:border-0 [&>div]:rounded-none">
+              <AiAssistant /> 
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,10 +6,13 @@ import com.academicplanner.dto.studyplan.StudyPlanItemResponse;
 import com.academicplanner.dto.studyplan.StudyPlanResponse;
 import com.academicplanner.dto.studyplan.TodaysScheduleResponse;
 import com.academicplanner.dto.task.TaskResponse;
+import com.academicplanner.entity.AiChatHistory;
 import com.academicplanner.entity.StudyAvailability;
 import com.academicplanner.entity.User;
+import com.academicplanner.repository.AiChatHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -28,6 +31,7 @@ import java.util.Optional;
 public class AiContextService {
 
     private final AiToolService aiToolService;
+    private final AiChatHistoryRepository aiChatHistoryRepository;
 
     public AiContext buildContext(User user) {
         LocalDate today = LocalDate.now();
@@ -37,6 +41,10 @@ public class AiContextService {
                 .currentDate(today)
                 .currentTime(now)
                 .studentEmail(user.getEmail());
+
+        // Fetch recent chat history
+        List<AiChatHistory> recentHistory = aiChatHistoryRepository.findRecentHistoryByUserId(user.getId(), PageRequest.of(0, 5));
+        builder.recentChatMessages(recentHistory);
 
         // 1. Today's Plan
         try {

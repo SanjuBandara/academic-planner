@@ -66,6 +66,23 @@ public class OpenAiProvider implements AiProvider {
 
             List<Map<String, String>> messages = new ArrayList<>();
             messages.add(Map.of("role", "system", "content", fullSystemPrompt));
+            
+            // Add conversation memory (recent chat history)
+            if (context.getRecentChatMessages() != null) {
+                // The history is already sorted desc by the repo, reversed in the UI,
+                // but the repo returns them newest-first. We need them oldest-first here.
+                List<com.academicplanner.entity.AiChatHistory> hist = new ArrayList<>(context.getRecentChatMessages());
+                java.util.Collections.reverse(hist);
+                
+                for (com.academicplanner.entity.AiChatHistory msg : hist) {
+                    // Don't duplicate the current message being processed (if it was already saved)
+                    if (msg.getMessage().equals(userMessage) && "user".equals(msg.getRole())) {
+                        continue;
+                    }
+                    messages.add(Map.of("role", msg.getRole(), "content", msg.getMessage()));
+                }
+            }
+            
             messages.add(Map.of("role", "user", "content", userMessage));
 
             Map<String, Object> requestBody = new HashMap<>();

@@ -15,5 +15,10 @@ public enum AiIntent {
     MODIFY_PLAN,
     REPLAN,
     MARK_ACTIVITY_COMPLETED,
+    // Phase 4
+    QUICK_ADD_TASK,
+    SKIP_TODAY,
+    BURNOUT_CHECK,
+    STUDY_BREAKDOWN,
     UNKNOWN
 }

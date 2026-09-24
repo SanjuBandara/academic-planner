@@ -7,7 +7,6 @@ import { taskApi } from "../api/taskApi";
 import { studyPlanApi } from "../api/studyPlanApi";
 import { aiAssistantApi } from "../api/aiAssistantApi";
 import { ItemStatus } from "../types/academic";
-import { AiAssistant } from "../components/ai/AiAssistant";
 
 export default function Dashboard() {
 
@@ -415,13 +414,7 @@ export default function Dashboard() {
             )}
           </div>
         </div>
-
-        {/* AI Planning Assistant Panel */}
-        <section className="space-y-3 pt-2">
-          <AiAssistant />
-        </section>
       </div>
     </Layout>
-
   );
 }

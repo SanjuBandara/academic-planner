@@ -48,4 +48,16 @@ public interface StudyPlanItemRepository extends JpaRepository<StudyPlanItem, Lo
     @org.springframework.data.jpa.repository.Modifying
     @Query("UPDATE StudyPlanItem spi SET spi.assessment = null WHERE spi.assessment.id = :assessmentId")
     void nullifyAssessmentReference(@Param("assessmentId") Long assessmentId);
+
+    /** Items within a date range for a user — used for burnout/pattern analysis. */
+    @Query("""
+            SELECT i FROM StudyPlanItem i
+            WHERE i.studyPlan.user.id = :userId
+              AND i.date >= :fromDate
+              AND i.date <= :toDate
+            ORDER BY i.date ASC, i.startTime ASC
+            """)
+    List<StudyPlanItem> findItemsInDateRange(@Param("userId") Long userId,
+                                             @Param("fromDate") LocalDate fromDate,
+                                             @Param("toDate") LocalDate toDate);
 }
