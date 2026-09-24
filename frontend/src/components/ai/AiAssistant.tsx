@@ -9,15 +9,40 @@ export const AiAssistant: React.FC = () => {
   const queryClient = useQueryClient();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: "initial-welcome",
-      sender: "assistant",
-      text: "Hello! I am your AI Planning Assistant. Ask me anything about your current study plan, today's schedule, upcoming assessments, or workload. What would you like help with?",
-      timestamp: "Just now",
-      intent: "GENERAL_PLAN_QUESTION",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [initialWelcomeShown, setInitialWelcomeShown] = useState(false);
+
+  const { data: historyData, isLoading: isHistoryLoading } = useQuery({
+    queryKey: ["chat-history"],
+    queryFn: () => aiAssistantApi.getChatHistory(),
+  });
+
+  useEffect(() => {
+    if (historyData?.messages && historyData.messages.length > 0) {
+      // Map API history to UI chat messages
+      const loadedMessages: ChatMessage[] = historyData.messages.map((m: any) => ({
+        id: "hist-" + m.id,
+        sender: m.sender,
+        text: m.text,
+        intent: m.intent,
+        timestamp: m.timestamp ? new Date(m.timestamp + "Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
+      }));
+      setMessages(loadedMessages);
+      setInitialWelcomeShown(true);
+    } else if (!isHistoryLoading && !initialWelcomeShown) {
+      // Show default welcome if no history
+      setMessages([
+        {
+          id: "initial-welcome",
+          sender: "assistant",
+          text: "Hello! I'm your **AI Planning Assistant**. Here's what I can help you with:\n\n• **Today's Plan** — Ask what you have to study\n• **Mark Sessions Done** — Say \"I finished my DSA session\"\n• **Assessments & Tasks** — Check upcoming deadlines\n• **Replanning Guidance** — \"I'm behind schedule — what should I do?\"\n\nType **help** for a full list of capabilities. What would you like help with?",
+          timestamp: "Just now",
+          intent: "GENERAL_PLAN_QUESTION",
+        },
+      ]);
+      setInitialWelcomeShown(true);
+    }
+  }, [historyData, isHistoryLoading, initialWelcomeShown]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -42,6 +67,11 @@ export const AiAssistant: React.FC = () => {
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, assistantMsg]);
+      // If the AI marked a session completed, refresh dashboard data
+      if (data.intent === "MARK_ACTIVITY_COMPLETED") {
+        queryClient.invalidateQueries({ queryKey: ["todays-schedule"] });
+        queryClient.invalidateQueries({ queryKey: ["active-study-plan"] });
+      }
     },
     onError: (err: any) => {
       const errorMsg: ChatMessage = {
@@ -68,10 +98,11 @@ export const AiAssistant: React.FC = () => {
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, sysMsg]);
-      // Invalidate relevant queries so dashboard updates in real-time!
+      // Invalidate all plan-related queries so dashboard/planner updates in real-time
       queryClient.invalidateQueries({ queryKey: ["todays-schedule"] });
       queryClient.invalidateQueries({ queryKey: ["active-study-plan"] });
       queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["upcoming-assessments"] });
     },
     onError: (err: any) => {
       alert("Failed to process proposal: " + (err.response?.data?.message || err.message));
@@ -154,9 +185,13 @@ export const AiAssistant: React.FC = () => {
         ))}
 
         {chatMutation.isPending && (
-          <div className="flex items-center gap-2 text-xs text-slate-400 py-2 px-1">
-            <span className="w-3.5 h-3.5 border-2 border-gold-dark border-t-transparent rounded-full animate-spin" />
-            <span>AI Assistant is analyzing your academic plan...</span>
+          <div className="flex items-center gap-2 py-2 px-1">
+            <div className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-gold-dark rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+              <span className="w-1.5 h-1.5 bg-gold-dark rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+              <span className="w-1.5 h-1.5 bg-gold-dark rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+            </div>
+            <span className="text-xs text-slate-400">AI Planner is thinking...</span>
           </div>
         )}
 

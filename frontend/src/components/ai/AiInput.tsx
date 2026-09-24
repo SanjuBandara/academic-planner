@@ -7,10 +7,13 @@ interface AiInputProps {
 
 const QUICK_PROMPTS = [
   "What do I have to study today?",
-  "What are my upcoming assessments?",
-  "How many hours of DSA do I have this week?",
-  "How much study time do I have remaining this week?",
+  "Show my upcoming assessments",
+  "I finished my last session",
+  "I'm behind schedule — what should I do?",
+  "How much study time do I have remaining?",
+  "Show my pending tasks",
 ];
+
 
 export const AiInput: React.FC<AiInputProps> = ({ onSendMessage, isLoading }) => {
   const [input, setInput] = useState("");

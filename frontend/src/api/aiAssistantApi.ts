@@ -13,4 +13,14 @@ export const aiAssistantApi = {
     const res = await apiClient.post<AiActionResponse>("/api/ai/assistant/action/confirm", payload);
     return res.data;
   },
+
+  getChatHistory: async (): Promise<{ messages: any[] }> => {
+    const res = await apiClient.get<{ messages: any[] }>("/api/ai/assistant/history");
+    return res.data;
+  },
+
+  getDailyHint: async (): Promise<{ hint: string }> => {
+    const res = await apiClient.get<{ hint: string }>("/api/ai/assistant/daily-hint");
+    return res.data;
+  },
 };

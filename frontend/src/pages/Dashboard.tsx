@@ -5,6 +5,7 @@ import { semesterApi } from "../api/semesterApi";
 import { assessmentApi } from "../api/assessmentApi";
 import { taskApi } from "../api/taskApi";
 import { studyPlanApi } from "../api/studyPlanApi";
+import { aiAssistantApi } from "../api/aiAssistantApi";
 import { ItemStatus } from "../types/academic";
 import { AiAssistant } from "../components/ai/AiAssistant";
 
@@ -38,6 +39,11 @@ export default function Dashboard() {
   const { data: todaysSchedule, isLoading: loadingSchedule } = useQuery({
     queryKey: ["todays-schedule"],
     queryFn: studyPlanApi.getTodaysSchedule,
+  });
+
+  const { data: aiHintData } = useQuery({
+    queryKey: ["ai-daily-hint"],
+    queryFn: aiAssistantApi.getDailyHint,
   });
 
   const statusMutation = useMutation({
@@ -99,6 +105,14 @@ export default function Dashboard() {
             ⚡ Open Adaptive Planner
           </Link>
         </div>
+
+        {/* AI Daily Hint Widget */}
+        {aiHintData?.hint && (
+          <div className="bg-gradient-to-r from-gold/10 via-white to-transparent border border-gold/30 p-4 rounded-xl flex items-center gap-3 shadow-sm">
+            <span className="text-xl">✨</span>
+            <p className="text-sm font-medium text-ink/80">{aiHintData.hint}</p>
+          </div>
+        )}
 
         {/* Top Metric Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
