@@ -46,6 +46,10 @@ public class AiProviderService {
             14. Do not expose internal implementation details or secrets unnecessarily.
             """;
 
+    public AiProviderResponse generateResponse(String userMessage, AiContext context) {
+        return generateResponse(userMessage, context, null);
+    }
+
     /**
      * Generates a response for the given user message and context.
      * Tries the configured LLM provider first; falls back to the grounded deterministic engine.
@@ -581,9 +585,9 @@ public class AiProviderService {
         // Strip common command words to get the subject
         String cleaned = lower
                 .replace("i've done", "").replace("i've finished", "").replace("i finished", "")
-                .replace(\"i did\", \"\").replace(\"mark\", \"\").replace(\"done\", \"\").replace(\"finished\", \"\")
-                .replace(\"completed\", \"\").replace(\"complete\", \"\").replace(\"as done\", \"\")
-                .replace(\"the\", \"\").replace(\"my\", \"\").replace(\"session\", \"\").trim();
+                .replace("i did", "").replace("mark", "").replace("done", "").replace("finished", "")
+                .replace("completed", "").replace("complete", "").replace("as done", "")
+                .replace("the", "").replace("my", "").replace("session", "").trim();
         return cleaned.isBlank() ? null : cleaned;
     }
 

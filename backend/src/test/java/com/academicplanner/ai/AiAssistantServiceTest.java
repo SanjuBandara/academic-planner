@@ -9,6 +9,7 @@ import com.academicplanner.ai.service.AiContextService;
 import com.academicplanner.ai.service.AiProviderService;
 import com.academicplanner.ai.service.AiToolService;
 import com.academicplanner.entity.User;
+import com.academicplanner.repository.AiChatHistoryRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,6 +38,9 @@ class AiAssistantServiceTest {
 
     @Mock
     private AiToolService aiToolService;
+
+    @Mock
+    private AiChatHistoryRepository aiChatHistoryRepository;
 
     @InjectMocks
     private AiAssistantService aiAssistantService;
@@ -83,7 +87,7 @@ class AiAssistantServiceTest {
     @Test
     void testWhatDoIHaveToday_returnsTodayPlan() {
         when(aiContextService.buildContext(testUser)).thenReturn(mockContext);
-        when(aiProviderService.generateResponse(eq("What do I have today?"), any(AiContext.class)))
+        when(aiProviderService.generateResponse(eq("What do I have today?"), any(AiContext.class), eq(testUser)))
                 .thenReturn(com.academicplanner.ai.provider.AiProvider.AiProviderResponse.builder()
                         .message("Today you have 1 session: DSA Assignment Preparation from 14:00 to 16:00.")
                         .intent(AiIntent.GET_TODAY_PLAN)
@@ -99,13 +103,13 @@ class AiAssistantServiceTest {
         assertThat(response.isActionRequired()).isFalse();
 
         verify(aiContextService).buildContext(testUser);
-        verify(aiProviderService).generateResponse("What do I have today?", mockContext);
+        verify(aiProviderService).generateResponse("What do I have today?", mockContext, testUser);
     }
 
     @Test
     void testUpcomingAssessments_usesAssessmentContext() {
         when(aiContextService.buildContext(testUser)).thenReturn(mockContext);
-        when(aiProviderService.generateResponse(eq("What are my upcoming assessments?"), any(AiContext.class)))
+        when(aiProviderService.generateResponse(eq("What are my upcoming assessments?"), any(AiContext.class), eq(testUser)))
                 .thenReturn(com.academicplanner.ai.provider.AiProvider.AiProviderResponse.builder()
                         .message("You have 1 upcoming assessment: IN2011 Midterm Exam due in 3 days.")
                         .intent(AiIntent.GET_UPCOMING_ASSESSMENTS)

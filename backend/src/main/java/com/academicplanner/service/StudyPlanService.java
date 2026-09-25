@@ -175,28 +175,37 @@ public class StudyPlanService {
                                 : item.getAssessment() != null ? "A-" + item.getAssessment().getId() : null,
                         item.getActivityLabel() != null ? item.getActivityLabel()
                                 : item.getTask() != null ? item.getTask().getTitle()
-                                : item.getAssessment() != null ? item.getAssessment().getTitle() : "Study Session",
+                                        : item.getAssessment() != null ? item.getAssessment().getTitle()
+                                                : "Study Session",
                         item.getActivityType(),
                         item.getModule() != null ? item.getModule().getCode() : null,
                         item.getModule() != null ? item.getModule().getName() : null,
-                        item.getStartTime() != null ? item.getStartTime().format(DateTimeFormatter.ofPattern("HH:mm")) : null,
-                        item.getEndTime() != null ? item.getEndTime().format(DateTimeFormatter.ofPattern("HH:mm")) : null,
+                        item.getStartTime() != null ? item.getStartTime().format(DateTimeFormatter.ofPattern("HH:mm"))
+                                : null,
+                        item.getEndTime() != null ? item.getEndTime().format(DateTimeFormatter.ofPattern("HH:mm"))
+                                : null,
                         item.getStartTime() != null && item.getEndTime() != null
                                 ? (int) java.time.Duration.between(item.getStartTime(), item.getEndTime()).toMinutes()
                                 : (int) (item.getPlannedHours() * 60),
-                        item.getStatus().name()
-                ))
+                        item.getStatus().name()))
                 .toList();
         return new TodaysScheduleResponse(today, totalMinutes, (double) totalMinutes / 60.0, sessions);
     }
 
     @Transactional(readOnly = true)
     public StudyPlanResponse getActivePlan(User user) {
-        StudyPlan plan = studyPlanRepository.findByUserAndTypeAndStatus(user, PlanType.WEEKLY, PlanStatus.ACTIVE)
+        StudyPlan plan = studyPlanRepository
+                .findByUserAndTypeAndStatus(user, PlanType.WEEKLY, PlanStatus.ACTIVE)
                 .orElseThrow(() -> new ResourceNotFoundException("No active study plan found"));
-        List<StudyPlanItem> items = studyPlanItemRepository
-                .findAllByStudyPlan_IdOrderByDateAscStartTimeAsc(plan.getId());
-        plan.setItems(items);
+
+        // Do NOT replace plan.items because it is a Hibernate-managed
+        // orphanRemoval collection.
+        //
+        // The StudyPlanResponse should be built from the items queried
+        // directly from the repository.
+        // List<StudyPlanItem> items = studyPlanItemRepository
+        // .findAllByStudyPlan_IdOrderByDateAscStartTimeAsc(plan.getId());
+
         return StudyPlanResponse.from(plan);
     }
 
