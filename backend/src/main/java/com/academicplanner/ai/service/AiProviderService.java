@@ -72,7 +72,11 @@ public class AiProviderService {
 
         if (activeProvider != null && activeProvider.isAvailable()) {
             try {
-                return activeProvider.generateResponse(CENTRAL_SYSTEM_PROMPT, userMessage, context);
+                AiProviderResponse providerResp = activeProvider.generateResponse(CENTRAL_SYSTEM_PROMPT, userMessage, context);
+                if (providerResp.getIntent() == AiIntent.MODIFY_PLAN || providerResp.isActionRequired()) {
+                    return enrichPlanModificationWithTool(providerResp, userMessage, context, user);
+                }
+                return providerResp;
             } catch (Exception e) {
                 log.warn("[AiProviderService] Primary AI provider failed: {}. Falling back to deterministic planner assistant.", e.getMessage());
             }
@@ -114,6 +118,11 @@ public class AiProviderService {
             return handleStudyBreakdown(lower, context);
         }
 
+        // ── Phase 5/6: Plan Modification Requests ────────────────────────────
+        if (isPlanModificationRequest(lower)) {
+            return handlePlanModification(message, lower, context, user);
+        }
+
         // ── Phase 4: Quick-Add Task ─────────────────────────────────────────
         if (lower.startsWith("add ") || lower.startsWith("create ") || lower.startsWith("new task")
                 || lower.contains("add a task") || lower.contains("create a task")
@@ -127,10 +136,41 @@ public class AiProviderService {
             return handleMarkCompleted(message, lower, context, user);
         }
 
-        // ── Phase 2: Replan / Reschedule ────────────────────────────────────
+        // ── Phase 8: Adaptive Replanning — Missed Sessions ─────────────────
+        if (lower.contains("missed") || lower.contains("couldn't study") || lower.contains("could not study")
+                || lower.contains("didn't study") || lower.contains("unable to study")) {
+            return handleAdaptiveMissedSession(message, lower, context, user);
+        }
+
+        // ── Phase 8: Adaptive Replanning — Availability Constraints ─────────
+        if ((lower.contains("only have") || lower.contains("only got")) && (lower.contains("hour") || lower.contains("hr") || lower.contains("tonight") || lower.contains("today"))) {
+            return handleAdaptiveAvailabilityLimit(lower, user);
+        }
+
+        if ((lower.contains("cannot study after") || lower.contains("can't study after") || lower.contains("no study after") || lower.contains("past 8") || lower.contains("after 8"))
+                && (lower.contains("pm") || lower.contains(":00") || lower.contains("8") || lower.contains("9") || lower.contains("10"))) {
+            return handleAdaptiveCutoffTime(lower, user);
+        }
+
+        // ── Phase 9: Planning Intelligence — Explanations & Insights ────────
+        if (lower.contains("why") && (lower.contains("more time") || lower.contains("more hours") || lower.contains("so much time")
+                || lower.contains("so many hours") || lower.contains("given more") || lower.contains("allocated"))) {
+            return handleExplainAllocation(message, lower, context);
+        }
+
+        if ((lower.contains("which day") || lower.contains("what day") || lower.contains("busiest day") || lower.contains("heaviest day"))
+                && (lower.contains("study time") || lower.contains("most") || lower.contains("hours") || lower.contains("workload") || lower.contains("plan"))) {
+            return handleHeaviestStudyDays(context);
+        }
+
+        if (lower.contains("am i behind") || lower.contains("behind on my") || lower.contains("falling behind") || lower.contains("am i on track")) {
+            return handleBehindScheduleAnalysis(context);
+        }
+
+        // ── Replan Summary / General Replanning Guidance ────────────────────
         if (lower.contains("replan") || lower.contains("reschedule") || lower.contains("regenerate plan")
                 || lower.contains("update my plan") || lower.contains("adjust my schedule")
-                || lower.contains("behind schedule") || lower.contains("missed")) {
+                || lower.contains("behind schedule")) {
             return handleReplanSummary(context);
         }
 
@@ -669,6 +709,430 @@ public class AiProviderService {
             created.priority() != null ? created.priority().name() : "MEDIUM");
         return AiProviderResponse.builder()
                 .message(msg).intent(AiIntent.QUICK_ADD_TASK).actionRequired(false).build();
+    }
+
+    // ── Phase 5 & 6 Helpers ──────────────────────────────────────────────────
+
+    private boolean isPlanModificationRequest(String lower) {
+        if (lower.contains("add a task") || lower.contains("create a task") || lower.contains("add assignment") || lower.contains("new task")) {
+            return false;
+        }
+        boolean hasActionWord = lower.contains("add") || lower.contains("increase") || lower.contains("reduce")
+                || lower.contains("decrease") || lower.contains("more time") || lower.contains("less time")
+                || lower.contains("give") || lower.contains("extend") || lower.contains("cut")
+                || lower.contains("enough time") || lower.contains("another hour");
+        boolean hasTimeWord = lower.contains("hour") || lower.contains("hr") || lower.contains("minute")
+                || lower.contains("min") || lower.contains("time") || lower.contains("session");
+        return hasActionWord && hasTimeWord;
+    }
+
+    private AiProviderResponse handlePlanModification(String originalMessage, String lower, AiContext context, User user) {
+        if (user == null) {
+            return AiProviderResponse.builder()
+                    .message("User context is required to modify study plans.")
+                    .intent(AiIntent.MODIFY_PLAN)
+                    .actionRequired(false)
+                    .build();
+        }
+
+        com.academicplanner.ai.model.AiAction action =
+                (lower.contains("reduce") || lower.contains("decrease") || lower.contains("less") || lower.contains("cut"))
+                        ? com.academicplanner.ai.model.AiAction.DECREASE_ACTIVITY_TIME
+                        : com.academicplanner.ai.model.AiAction.INCREASE_ACTIVITY_TIME;
+
+        int minutes = parseMinutesFromMessage(lower);
+        String targetActivity = extractTargetActivityOrModule(lower, context);
+
+        com.academicplanner.ai.dto.PlanModificationRequest req = com.academicplanner.ai.dto.PlanModificationRequest.builder()
+                .action(action)
+                .moduleCode(targetActivity)
+                .activityName(targetActivity)
+                .additionalMinutes(minutes)
+                .build();
+
+        com.academicplanner.ai.dto.PlanModificationResult result = aiToolService.requestPlanModification(req, user);
+
+        boolean hasProposal = result.getProposalId() != null;
+        String formattedMessage;
+        if ("FEASIBLE".equals(result.getStatus())) {
+            formattedMessage = String.format("⚡ **Feasible Plan Change Proposed**\n\n%s\n\nClick **Apply Change** below to update your timetable.",
+                    result.getReason());
+        } else if ("REQUIRES_CONFIRMATION".equals(result.getStatus())) {
+            formattedMessage = String.format("⚡ **Adjustment Proposal**\n\n%s\n\nClick **Apply Change** below to confirm these schedule adjustments.",
+                    result.getReason());
+        } else if ("PARTIALLY_FEASIBLE".equals(result.getStatus())) {
+            formattedMessage = String.format("⚡ **Partial Allocation Proposed**\n\n%s\n\nClick **Apply Change** to apply this partial time increase.",
+                    result.getReason());
+        } else {
+            formattedMessage = String.format("⚠️ **Unable to Modify Schedule**\n\n%s", result.getReason());
+        }
+
+        return AiProviderResponse.builder()
+                .message(formattedMessage)
+                .intent(AiIntent.MODIFY_PLAN)
+                .actionRequired(hasProposal)
+                .action(hasProposal ? result : null)
+                .planPreview(result.getAffectedActivities())
+                .build();
+    }
+
+    private int parseMinutesFromMessage(String lower) {
+        java.util.regex.Matcher hourMatcher = java.util.regex.Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(?:hours?|hrs?|h)\\b").matcher(lower);
+        if (hourMatcher.find()) {
+            double hrs = Double.parseDouble(hourMatcher.group(1));
+            return (int) Math.round(hrs * 60);
+        }
+        java.util.regex.Matcher minMatcher = java.util.regex.Pattern.compile("(\\d+)\\s*(?:minutes?|mins?|m)\\b").matcher(lower);
+        if (minMatcher.find()) {
+            return Integer.parseInt(minMatcher.group(1));
+        }
+        if (lower.contains("another hour") || lower.contains("an hour") || lower.contains("one hour")) {
+            return 60;
+        }
+        if (lower.contains("two hours") || lower.contains("2 hours")) {
+            return 120;
+        }
+        if (lower.contains("three hours") || lower.contains("3 hours")) {
+            return 180;
+        }
+        if (lower.contains("half an hour") || lower.contains("30 min")) {
+            return 30;
+        }
+        return 60;
+    }
+
+    private String extractTargetActivityOrModule(String lower, AiContext context) {
+        if (context.getTodayPlan() != null) {
+            for (AiContext.SessionSummary s : context.getTodayPlan()) {
+                if (s.getModuleCode() != null && lower.contains(s.getModuleCode().toLowerCase())) {
+                    return s.getModuleCode();
+                }
+                if (s.getModuleName() != null && lower.contains(s.getModuleName().toLowerCase())) {
+                    return s.getModuleName();
+                }
+                if (s.getActivityLabel() != null && lower.contains(s.getActivityLabel().toLowerCase())) {
+                    return s.getActivityLabel();
+                }
+            }
+        }
+        if (context.getWeekPlan() != null) {
+            for (AiContext.SessionSummary s : context.getWeekPlan()) {
+                if (s.getModuleCode() != null && lower.contains(s.getModuleCode().toLowerCase())) {
+                    return s.getModuleCode();
+                }
+                if (s.getModuleName() != null && lower.contains(s.getModuleName().toLowerCase())) {
+                    return s.getModuleName();
+                }
+                if (s.getActivityLabel() != null && lower.contains(s.getActivityLabel().toLowerCase())) {
+                    return s.getActivityLabel();
+                }
+            }
+        }
+        if (context.getUpcomingAssessments() != null) {
+            for (AiContext.AssessmentSummary a : context.getUpcomingAssessments()) {
+                if (a.getModuleCode() != null && lower.contains(a.getModuleCode().toLowerCase())) {
+                    return a.getModuleCode();
+                }
+                if (a.getTitle() != null && lower.contains(a.getTitle().toLowerCase())) {
+                    return a.getTitle();
+                }
+            }
+        }
+        java.util.regex.Matcher codeMatcher = java.util.regex.Pattern.compile("\\b([a-zA-Z]{2,4}\\d{3,4})\\b").matcher(lower);
+        if (codeMatcher.find()) {
+            return codeMatcher.group(1).toUpperCase();
+        }
+
+        // ── Phase 10: Multi-Turn Conversation Memory ────────────────────────
+        // If no explicit module code was in the current message, infer from previous turns
+        if (context.getRecentChatMessages() != null && !context.getRecentChatMessages().isEmpty()) {
+            for (com.academicplanner.entity.AiChatHistory past : context.getRecentChatMessages()) {
+                String pastMsg = past.getMessage();
+                if (pastMsg == null) continue;
+                String pastLower = pastMsg.toLowerCase();
+
+                if (context.getTodayPlan() != null) {
+                    for (AiContext.SessionSummary s : context.getTodayPlan()) {
+                        if (s.getModuleCode() != null && pastLower.contains(s.getModuleCode().toLowerCase())) {
+                            return s.getModuleCode();
+                        }
+                    }
+                }
+                if (context.getWeekPlan() != null) {
+                    for (AiContext.SessionSummary s : context.getWeekPlan()) {
+                        if (s.getModuleCode() != null && pastLower.contains(s.getModuleCode().toLowerCase())) {
+                            return s.getModuleCode();
+                        }
+                    }
+                }
+                java.util.regex.Matcher pm = java.util.regex.Pattern.compile("\\b([a-zA-Z]{2,4}\\d{3,4})\\b").matcher(pastMsg);
+                if (pm.find()) {
+                    return pm.group(1).toUpperCase();
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private AiProviderResponse enrichPlanModificationWithTool(AiProviderResponse providerResp, String userMessage, AiContext context, User user) {
+        if (user == null) {
+            return providerResp;
+        }
+        String lower = userMessage.toLowerCase(Locale.ROOT);
+        AiProviderResponse toolResp = handlePlanModification(userMessage, lower, context, user);
+        if (toolResp.isActionRequired() || toolResp.getAction() != null) {
+            return toolResp;
+        }
+        return toolResp;
+    }
+
+    // ── Phase 8 Helpers ──────────────────────────────────────────────────────
+
+    private AiProviderResponse handleAdaptiveMissedSession(String originalMessage, String lower, AiContext context, User user) {
+        if (user == null) {
+            return AiProviderResponse.builder()
+                    .message("User context is required to adaptively reschedule sessions.")
+                    .intent(AiIntent.REPLAN)
+                    .actionRequired(false)
+                    .build();
+        }
+
+        String target = extractTargetActivityOrModule(lower, context);
+        if (target == null && context.getTodayPlan() != null && !context.getTodayPlan().isEmpty()) {
+            target = context.getTodayPlan().stream()
+                    .filter(s -> !"COMPLETED".equals(s.getStatus()) && !"SKIPPED".equals(s.getStatus()))
+                    .findFirst()
+                    .map(AiContext.SessionSummary::getActivityLabel)
+                    .orElse(context.getTodayPlan().get(0).getActivityLabel());
+        }
+
+        if (target == null) {
+            return AiProviderResponse.builder()
+                    .message("Which session did you miss? (e.g. *\"I missed my DSA session today\"*)")
+                    .intent(AiIntent.REPLAN)
+                    .actionRequired(false)
+                    .build();
+        }
+
+        com.academicplanner.ai.dto.PlanModificationResult result = aiToolService.createMissedSessionProposal(target, user);
+        return AiProviderResponse.builder()
+                .message("🔄 **Adaptive Replan Proposal**\n\n" + result.getReason())
+                .intent(AiIntent.REPLAN)
+                .actionRequired(result.getProposalId() != null)
+                .action(result.getProposalId() != null ? result : null)
+                .planPreview(result.getAffectedActivities())
+                .build();
+    }
+
+    private AiProviderResponse handleAdaptiveAvailabilityLimit(String lower, User user) {
+        if (user == null) {
+            return AiProviderResponse.builder()
+                    .message("User context is required to update availability.")
+                    .intent(AiIntent.REPLAN)
+                    .actionRequired(false)
+                    .build();
+        }
+
+        double hours = 2.0;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(?:hours?|hrs?|h)").matcher(lower);
+        if (m.find()) {
+            hours = Double.parseDouble(m.group(1));
+        } else if (lower.contains("one hour") || lower.contains("1 hour")) {
+            hours = 1.0;
+        } else if (lower.contains("three hours") || lower.contains("3 hours")) {
+            hours = 3.0;
+        }
+
+        com.academicplanner.ai.dto.PlanModificationResult result = aiToolService.createAvailabilityChangeProposal(hours, user);
+        return AiProviderResponse.builder()
+                .message("⚡ **Availability Limit Adjustment**\n\n" + result.getReason())
+                .intent(AiIntent.REPLAN)
+                .actionRequired(result.getProposalId() != null)
+                .action(result.getProposalId() != null ? result : null)
+                .planPreview(result.getAffectedActivities())
+                .build();
+    }
+
+    private AiProviderResponse handleAdaptiveCutoffTime(String lower, User user) {
+        if (user == null) {
+            return AiProviderResponse.builder()
+                    .message("User context is required to update cutoff time.")
+                    .intent(AiIntent.REPLAN)
+                    .actionRequired(false)
+                    .build();
+        }
+
+        java.time.LocalTime cutoff = java.time.LocalTime.of(20, 0); // default 8 PM
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)?").matcher(lower);
+        while (m.find()) {
+            int hour = Integer.parseInt(m.group(1));
+            int min = m.group(2) != null ? Integer.parseInt(m.group(2)) : 0;
+            String ampm = m.group(3);
+            if ("pm".equalsIgnoreCase(ampm) && hour < 12) hour += 12;
+            if (hour >= 1 && hour <= 24) {
+                cutoff = java.time.LocalTime.of(hour % 24, min);
+                break;
+            }
+        }
+
+        com.academicplanner.ai.dto.PlanModificationResult result = aiToolService.createTimeCutoffProposal(cutoff, user);
+        return AiProviderResponse.builder()
+                .message("🌙 **Evening Study Cutoff**\n\n" + result.getReason())
+                .intent(AiIntent.REPLAN)
+                .actionRequired(result.getProposalId() != null)
+                .action(result.getProposalId() != null ? result : null)
+                .planPreview(result.getAffectedActivities())
+                .build();
+    }
+
+    // ── Phase 9 Helpers: Planning Intelligence & Explanations ─────────────────
+
+    private AiProviderResponse handleExplainAllocation(String originalMessage, String lower, AiContext context) {
+        String target = extractTargetActivityOrModule(lower, context);
+        if (target == null && context.getWeekPlan() != null && !context.getWeekPlan().isEmpty()) {
+            target = context.getWeekPlan().get(0).getModuleCode();
+        }
+
+        if (target == null) {
+            return AiProviderResponse.builder()
+                    .message("Which module or subject would you like me to explain the schedule allocation for?")
+                    .intent(AiIntent.GENERAL_PLAN_QUESTION)
+                    .actionRequired(false)
+                    .build();
+        }
+
+        String finalTarget = target;
+        List<AiContext.AssessmentSummary> relatedAssessments = (context.getUpcomingAssessments() != null)
+                ? context.getUpcomingAssessments().stream()
+                .filter(a -> (a.getModuleCode() != null && a.getModuleCode().equalsIgnoreCase(finalTarget))
+                        || (a.getTitle() != null && a.getTitle().toLowerCase().contains(finalTarget.toLowerCase())))
+                .toList()
+                : List.of();
+
+        List<AiContext.TaskSummary> relatedTasks = (context.getTasks() != null)
+                ? context.getTasks().stream()
+                .filter(t -> (t.getModuleCode() != null && t.getModuleCode().equalsIgnoreCase(finalTarget))
+                        || (t.getTitle() != null && t.getTitle().toLowerCase().contains(finalTarget.toLowerCase())))
+                .toList()
+                : List.of();
+
+        double plannedHours = (context.getWeekPlan() != null)
+                ? context.getWeekPlan().stream()
+                .filter(s -> (s.getModuleCode() != null && s.getModuleCode().equalsIgnoreCase(finalTarget))
+                        || (s.getActivityLabel() != null && s.getActivityLabel().toLowerCase().contains(finalTarget.toLowerCase())))
+                .mapToDouble(AiContext.SessionSummary::getPlannedHours).sum()
+                : 0.0;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("### 🧠 Why the Planner Allocated **%.1f Hours** to **%s**\n\n", plannedHours, target));
+        sb.append("The Python OR-Tools CP-SAT engine prioritised this subject based on strict optimization criteria:\n\n");
+
+        if (!relatedAssessments.isEmpty()) {
+            AiContext.AssessmentSummary ass = relatedAssessments.get(0);
+            sb.append(String.format("1. **High Assessment Weight & Deadline Pressure** 🎯\n" +
+                            "   • Assessment: **%s**\n" +
+                            "   • Due: **%s**\n" +
+                            "   • Grade Weight: **%.0f%%**\n" +
+                            "   *The solver penalizes overdue risk exponentially as deadlines draw closer.*\n\n",
+                    ass.getTitle(), ass.getDueDateTime() != null ? ass.getDueDateTime().replace("T", " ") : "Soon", ass.getWeight() != null ? ass.getWeight() : 0.0));
+        }
+
+        if (!relatedTasks.isEmpty()) {
+            double taskHours = relatedTasks.stream().mapToDouble(t -> t.getRemainingHours() != null ? t.getRemainingHours() : 0.0).sum();
+            sb.append(String.format("2. **Pending Task Workload** 📋\n" +
+                    "   • You have **%d active task(s)** requiring approximately **%.1f hours** of remaining effort.\n\n",
+                    relatedTasks.size(), taskHours));
+        }
+
+        sb.append("3. **Paced Study Buffer** ⏱️\n" +
+                "   • Rather than cramming near the deadline, the CP-SAT engine spaces study sessions evenly across your declared available days.\n\n" +
+                "💡 *Need adjustments? You can say: \"Add 1 hour to " + target + "\" or \"Reduce " + target + " by 30 minutes\".*");
+
+        return AiProviderResponse.builder()
+                .message(sb.toString().trim())
+                .intent(AiIntent.GENERAL_PLAN_QUESTION)
+                .actionRequired(false)
+                .build();
+    }
+
+    private AiProviderResponse handleHeaviestStudyDays(AiContext context) {
+        if (context.getWeekPlan() == null || context.getWeekPlan().isEmpty()) {
+            return AiProviderResponse.builder()
+                    .message("You do not have an active weekly study plan right now. Generate one in the **Adaptive Study Planner** to see your day-by-day study distribution.")
+                    .intent(AiIntent.GENERAL_PLAN_QUESTION)
+                    .actionRequired(false)
+                    .build();
+        }
+
+        java.util.Map<String, Double> dayHours = new java.util.LinkedHashMap<>();
+        java.util.Map<String, Integer> daySessions = new java.util.LinkedHashMap<>();
+
+        for (AiContext.SessionSummary s : context.getWeekPlan()) {
+            String date = s.getDate();
+            dayHours.put(date, dayHours.getOrDefault(date, 0.0) + s.getPlannedHours());
+            daySessions.put(date, daySessions.getOrDefault(date, 0) + 1);
+        }
+
+        List<java.util.Map.Entry<String, Double>> sorted = dayHours.entrySet().stream()
+                .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
+                .toList();
+
+        StringBuilder sb = new StringBuilder("### 📅 Weekly Study Workload Breakdown\n\n");
+        sb.append("Here is your study time distributed by day (ranked by heaviest workload):\n\n");
+
+        for (int i = 0; i < sorted.size(); i++) {
+            var entry = sorted.get(i);
+            String badge = (i == 0) ? " 🏋️ *(Heaviest)*" : (i == sorted.size() - 1) ? " 🍃 *(Lightest)*" : "";
+            sb.append(String.format("• **%s**: **%.1f hrs** (%d session(s))%s\n",
+                    entry.getKey(), entry.getValue(), daySessions.getOrDefault(entry.getKey(), 1), badge));
+        }
+
+        return AiProviderResponse.builder()
+                .message(sb.toString().trim())
+                .intent(AiIntent.GENERAL_PLAN_QUESTION)
+                .actionRequired(false)
+                .build();
+    }
+
+    private AiProviderResponse handleBehindScheduleAnalysis(AiContext context) {
+        List<AiContext.SessionSummary> weekPlan = context.getWeekPlan();
+        if (weekPlan == null || weekPlan.isEmpty()) {
+            return AiProviderResponse.builder()
+                    .message("You don't have an active study plan for this week. Head to the **Adaptive Study Planner** to create one!")
+                    .intent(AiIntent.GENERAL_PLAN_QUESTION)
+                    .actionRequired(false)
+                    .build();
+        }
+
+        long completed = weekPlan.stream().filter(s -> "COMPLETED".equals(s.getStatus())).count();
+        long skipped = weekPlan.stream().filter(s -> "SKIPPED".equals(s.getStatus())).count();
+        long pending = weekPlan.stream().filter(s -> "PLANNED".equals(s.getStatus())).count();
+        double completedHours = weekPlan.stream().filter(s -> "COMPLETED".equals(s.getStatus())).mapToDouble(AiContext.SessionSummary::getPlannedHours).sum();
+        double pendingHours = weekPlan.stream().filter(s -> "PLANNED".equals(s.getStatus())).mapToDouble(AiContext.SessionSummary::getPlannedHours).sum();
+
+        StringBuilder sb = new StringBuilder();
+        if (skipped > 0) {
+            sb.append(String.format("⚠️ **You are slightly behind schedule.**\n\n" +
+                    "• **Skipped Sessions:** %d\n" +
+                    "• **Completed:** %d (%.1f hrs)\n" +
+                    "• **Remaining:** %d (%.1f hrs)\n\n" +
+                    "💡 *Recommendation:* You can say *\"I missed my session\"* to have the planner reschedule it, or click **Generate New Plan** in the planner tab to redistribute your remaining workload.",
+                    skipped, completed, completedHours, pending, pendingHours));
+        } else {
+            sb.append(String.format("🎉 **You are right on track!**\n\n" +
+                    "• **Completed:** %d session(s) (%.1f hrs)\n" +
+                    "• **Remaining:** %d session(s) (%.1f hrs)\n" +
+                    "• **Skipped:** 0 sessions\n\n" +
+                    "Keep up the great consistency! You're making excellent progress through your academic goals.",
+                    completed, completedHours, pending, pendingHours));
+        }
+
+        return AiProviderResponse.builder()
+                .message(sb.toString())
+                .intent(AiIntent.GENERAL_PLAN_QUESTION)
+                .actionRequired(false)
+                .build();
     }
 }
 

@@ -215,4 +215,89 @@ class PlanningToolTest {
         assertThat(result.getStatus()).isEqualTo("INFEASIBLE");
         assertThat(result.getReason()).contains("not found in your active schedule");
     }
+
+    @Test
+    void testRequestModification_scenarioB_displacement_returnsRequiresConfirmation() {
+        when(studyPlanItemRepository.findByIdAndStudyPlan_User_Id(101L, student1.getId()))
+                .thenReturn(Optional.of(plannedItem));
+
+        // 2 hours total available today
+        StudyAvailability availability = StudyAvailability.builder()
+                .user(student1)
+                .dayOfWeek(LocalDate.now().getDayOfWeek())
+                .availableHours(2.0)
+                .build();
+        when(availabilityRepository.findByUserAndDayOfWeek(eq(student1), any()))
+                .thenReturn(Optional.of(availability));
+
+        // plannedItem (1 hr) + otherItem (1 hr) = 2 hrs -> 0 free capacity
+        StudyPlanItem otherItem = StudyPlanItem.builder()
+                .id(103L)
+                .studyPlan(activePlan)
+                .date(LocalDate.now())
+                .activityLabel("Statistics")
+                .plannedHours(1.0) // 60 min -> can reduce 30 min
+                .status(StudyPlanItem.ItemStatus.PLANNED)
+                .build();
+
+        when(studyPlanItemRepository.findAllByStudyPlan_IdAndDateOrderByStartTimeAsc(activePlan.getId(), LocalDate.now()))
+                .thenReturn(List.of(plannedItem, otherItem));
+
+        PlanModificationRequest request = PlanModificationRequest.builder()
+                .action(AiAction.INCREASE_ACTIVITY_TIME)
+                .activityId(101L)
+                .additionalMinutes(30) // requesting 30 mins
+                .build();
+
+        PlanModificationResult result = planningTool.requestPlanModification(request, student1);
+
+        assertThat(result.getStatus()).isEqualTo("REQUIRES_CONFIRMATION");
+        assertThat(result.getProposalId()).isNotNull();
+        assertThat(result.getReason()).contains("Statistics");
+    }
+
+    @Test
+    void testAdaptiveReplanning_missedSession_createsProposal() {
+        when(studyPlanItemRepository.findTodaysItems(eq(student1.getId()), any()))
+                .thenReturn(List.of(plannedItem));
+        when(availabilityRepository.findByUserAndDayOfWeek(eq(student1), any()))
+                .thenReturn(Optional.of(StudyAvailability.builder().availableHours(4.0).build()));
+        when(studyPlanItemRepository.findAllByStudyPlan_IdAndDateOrderByStartTimeAsc(any(), any()))
+                .thenReturn(List.of());
+
+        PlanModificationResult result = planningTool.createMissedSessionProposal("IN2011", student1);
+
+        assertThat(result.getStatus()).isEqualTo("REQUIRES_CONFIRMATION");
+        assertThat(result.getProposalId()).isNotNull();
+        assertThat(result.getReason()).contains("missed");
+    }
+
+    @Test
+    void testApplyProposal_successfulPersistence() {
+        when(studyPlanItemRepository.findByIdAndStudyPlan_User_Id(101L, student1.getId()))
+                .thenReturn(Optional.of(plannedItem));
+
+        StudyAvailability availability = StudyAvailability.builder()
+                .user(student1)
+                .dayOfWeek(LocalDate.now().getDayOfWeek())
+                .availableHours(4.0)
+                .build();
+        when(availabilityRepository.findByUserAndDayOfWeek(eq(student1), any()))
+                .thenReturn(Optional.of(availability));
+        when(studyPlanItemRepository.findAllByStudyPlan_IdAndDateOrderByStartTimeAsc(activePlan.getId(), LocalDate.now()))
+                .thenReturn(List.of(plannedItem));
+
+        PlanModificationRequest request = PlanModificationRequest.builder()
+                .action(AiAction.INCREASE_ACTIVITY_TIME)
+                .activityId(101L)
+                .additionalMinutes(60)
+                .build();
+
+        PlanModificationResult proposal = planningTool.requestPlanModification(request, student1);
+        assertThat(proposal.getProposalId()).isNotNull();
+
+        boolean applied = planningTool.applyProposal(proposal.getProposalId(), student1);
+        assertThat(applied).isTrue();
+        assertThat(plannedItem.getPlannedHours()).isEqualTo(2.0);
+    }
 }

@@ -19,6 +19,8 @@ public class PlanModificationRequest {
 
     private AiAction action;
     private Long activityId;
+    private String activityName;
+    private String moduleCode;
     private Integer additionalMinutes;
     private Integer targetMinutes;
     private LocalDate startDate;

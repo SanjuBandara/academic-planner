@@ -83,6 +83,18 @@ public class AiToolService {
         return planningTool.requestPlanModification(request, user);
     }
 
+    public PlanModificationResult createMissedSessionProposal(String moduleOrTitle, User user) {
+        return planningTool.createMissedSessionProposal(moduleOrTitle, user);
+    }
+
+    public PlanModificationResult createAvailabilityChangeProposal(double newMaxHoursToday, User user) {
+        return planningTool.createAvailabilityChangeProposal(newMaxHoursToday, user);
+    }
+
+    public PlanModificationResult createTimeCutoffProposal(java.time.LocalTime cutoff, User user) {
+        return planningTool.createTimeCutoffProposal(cutoff, user);
+    }
+
     public boolean applyProposal(String proposalId, User user) {
         return planningTool.applyProposal(proposalId, user);
     }
